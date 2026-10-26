@@ -1,0 +1,62 @@
+*.log
+.kiro
+
+# ── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+junit*.xml
+test_report*.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ── Node / Next.js ───────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# ── Local runtime data (never commit) ───────────────────────────────────
+storage/
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ── Model weights ────────────────────────────────────────────────────────
+models/
+
+# ── Environment secrets ──────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── OS / editor ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/settings.json
+
+# ── Docker volumes ───────────────────────────────────────────────────────
+postgres-data/
+redis-data/

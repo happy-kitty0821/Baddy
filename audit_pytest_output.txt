@@ -1,0 +1,29 @@
+﻿python.exe : C:\Users\User\Documents\Badminton AI 
+Analysis\backend\.venv\Lib\site-packages\pytest_asyncio\plugin.py:207: PytestDeprecationWarning: The configuration 
+option "asyncio_default_fixture_loop_scope" is unset.
+At line:1 char:1
++ & $py -m pytest tests/ -v --tb=short -p no:warnings --junit-xml="audi ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\User\D...cope" is unset.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of 
+pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture 
+loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: 
+"function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-8.3.5, pluggy-1.7.0
+rootdir: C:\Users\User\Documents\Badminton AI Analysis\backend
+configfile: pytest.ini
+plugins: anyio-4.15.1, asyncio-0.25.3, cov-6.1.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None
+collected 26 items
+
+tests\test_ingestion.py ....                                             [ 15%]
+tests\test_match_api.py ............                                     [ 61%]
+tests\test_storage.py ..........                                         [100%]
+
+- generated xml file: C:\Users\User\Documents\Badminton AI Analysis\backend\audit_test_report.xml -
+============================= 26 passed in 28.95s =============================

@@ -1,0 +1,113 @@
+# Docker Compose configuration for Badminton AI Coach
+#
+# Usage:
+#   Development (PostgreSQL + Redis only):
+#     docker compose up postgres redis -d
+#
+#   Full stack (all services):
+#     docker compose up -d
+#
+# This file is NOT required for local development with SQLite.
+# It is used for:
+#   1. PostgreSQL integration testing (replace DATABASE_URL in .env).
+#   2. Linux production deployment.
+#   3. Running Redis for the Celery worker.
+#
+# PostgreSQL compatibility note:
+#   SQLite is used by default locally.  PostgreSQL compatibility has NOT
+#   been verified by integration tests yet.  Run integration tests against
+#   this compose stack before any production deployment.
+#   See docs/development-plan.md §PostgreSQL Integration Testing.
+
+version: "3.9"
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-badminton}
+      POSTGRES_USER: ${POSTGRES_USER:-badminton}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-badminton}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI backend ────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-badminton}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-badminton}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /app/storage
+    volumes:
+      - storage-data:/app/storage
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery worker ──────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-badminton}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-badminton}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /app/storage
+    volumes:
+      - storage-data:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Next.js frontend ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  redis-data:
+  storage-data:

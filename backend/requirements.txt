@@ -1,0 +1,39 @@
+# ── Badminton AI Coach — backend dependencies ────────────────────────────
+# Pin to minor versions for reproducibility. Update deliberately.
+
+# Web framework
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+
+# Database
+sqlalchemy==2.0.41
+alembic==1.14.1
+
+# PostgreSQL driver (used in production; not required for SQLite dev)
+# Install separately when running against PostgreSQL:
+#   pip install "psycopg[binary]==3.2.9"
+
+# Pydantic (bundled with FastAPI; pinned for explicitness)
+pydantic==2.11.4
+pydantic-settings==2.9.1
+
+# File upload support
+python-multipart==0.0.20
+
+# Async file I/O
+aiofiles==24.1.0
+
+# Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.3.0
+
+# HTTP client (for health checks and future LLM calls)
+httpx==0.28.1
+
+# Background tasks
+celery[redis]==5.4.0
+redis==5.3.0
+
+# Utilities
+python-dateutil==2.9.0
