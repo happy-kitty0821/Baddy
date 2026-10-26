@@ -148,16 +148,17 @@ def small_video(tmp_path) -> Path:
     A minimal valid MP4 file for upload tests.
 
     Creates a 1-second 64x64 black video at 10 fps using FFmpeg.
-    Falls back to a raw bytes stub if FFmpeg is not on PATH.
+    Falls back to a raw bytes stub if FFmpeg is not findable.
     """
-    import shutil
     import subprocess
+    from worker.tasks.ingestion import _find_ffmpeg_binary
 
     out = tmp_path / "test_video.mp4"
-    if shutil.which("ffmpeg"):
+    ffmpeg = _find_ffmpeg_binary("ffmpeg")
+    if ffmpeg:
         subprocess.run(
             [
-                "ffmpeg", "-y",
+                ffmpeg, "-y",
                 "-f", "lavfi", "-i", "color=c=black:size=64x64:rate=10:duration=1",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
                 str(out),

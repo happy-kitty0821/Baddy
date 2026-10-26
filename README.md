@@ -79,13 +79,14 @@ Start Redis first (use WSL, a standalone Redis build, or Docker:
 `docker run -d -p 6379:6379 redis:7-alpine`).
 
 ```powershell
-# Activate the venv from backend/, then cd to the project root
-# (the worker/ package lives at the project root, not inside backend/)
+# From the backend/ directory (activate the venv first):
 cd backend
 .venv\Scripts\activate
-cd ..
-celery -A worker.celery_app worker --loglevel=info --pool=solo
+celery -A celery_worker worker --loglevel=info --pool=solo
 ```
+
+> `celery_worker.py` is a thin entry point that adds the project root to sys.path
+> before loading the real worker, so you can start it from `backend/` with the venv active.
 
 > If Redis is not running, uploads still succeed and matches appear in the library, but ingestion jobs stay queued until the worker can connect.
 

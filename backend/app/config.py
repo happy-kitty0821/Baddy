@@ -97,6 +97,19 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
 
+    # ── FFmpeg / ffprobe location ──────────────────────────────────────────
+    # Optional: set to the directory that contains ffmpeg.exe and ffprobe.exe
+    # (or the binary symlinks on Linux).  Useful when the Celery worker process
+    # does not inherit the shell PATH that ffmpeg was installed into.
+    #
+    # Windows example (winget install):
+    #   FFMPEG_BIN=C:/Users/YourName/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_.../bin
+    # Linux example:
+    #   FFMPEG_BIN=/usr/bin
+    #
+    # Leave empty to rely on PATH (which works when all processes share a shell).
+    ffmpeg_bin: str = ""
+
     # ── Derived helpers ────────────────────────────────────────────────────
     @property
     def storage_path(self) -> Path:

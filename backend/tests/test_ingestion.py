@@ -2,7 +2,9 @@
 Tests for the ingestion pipeline (Stage 1).
 
 These tests call run_ingestion_sync() directly, without a Celery broker.
-A real FFmpeg/ffprobe must be on PATH for metadata extraction tests.
+ffprobe must be findable (on PATH, via FFMPEG_BIN, or via platform fallback)
+for metadata extraction tests to run.  Tests are skipped when ffprobe is
+not available anywhere.
 """
 
 from __future__ import annotations
@@ -20,7 +22,10 @@ from app.services.job_service import create_analysis_run
 from app.services.match_service import create_match
 from app.schemas.match import MatchCreate
 from shared.enums import AnalysisStatus, AssetType, MatchStatus
-from worker.tasks.ingestion import run_ingestion_sync
+from worker.tasks.ingestion import run_ingestion_sync, _find_ffmpeg_binary
+
+# Use the resolver — not shutil.which — so the same logic as the worker applies.
+_FFPROBE_AVAILABLE = _find_ffmpeg_binary("ffprobe") is not None
 
 
 @pytest.fixture()
@@ -45,8 +50,8 @@ def match_with_asset(db_session, test_storage, small_video):
 
 def test_ingestion_completes(db_session, test_storage, match_with_asset):
     """Ingestion task marks the run COMPLETED and populates match metadata."""
-    if not shutil.which("ffprobe"):
-        pytest.skip("ffprobe not on PATH — skipping metadata extraction test")
+    if not _FFPROBE_AVAILABLE:
+        pytest.skip("ffprobe not available (not on PATH or FFMPEG_BIN)")
 
     run = create_analysis_run(db_session, match_with_asset.id)
     db_session.commit()
@@ -89,8 +94,8 @@ def test_ingestion_completes(db_session, test_storage, match_with_asset):
 
 def test_ingestion_idempotent(db_session, test_storage, match_with_asset):
     """Running ingestion twice for the same run does not corrupt the record."""
-    if not shutil.which("ffprobe"):
-        pytest.skip("ffprobe not on PATH")
+    if not _FFPROBE_AVAILABLE:
+        pytest.skip("ffprobe not available (not on PATH or FFMPEG_BIN)")
 
     run = create_analysis_run(db_session, match_with_asset.id)
     db_session.commit()

@@ -46,6 +46,124 @@ from app.storage.local import LocalFileStorage  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+# ── FFmpeg binary resolution ─────────────────────────────────────────────────
+
+# Windows-specific fallback locations to try when ffprobe is not on PATH.
+# Covers winget installation paths (Gyan.FFmpeg) and common manual installs.
+_WINDOWS_FFMPEG_CANDIDATES = [
+    # winget Gyan.FFmpeg (full build and essentials)
+    r"C:\Users\{user}\AppData\Local\Microsoft\WinGet\Packages",
+    r"C:\Program Files\FFmpeg\bin",
+    r"C:\FFmpeg\bin",
+    r"C:\tools\ffmpeg\bin",
+]
+
+# Linux fallback locations (used on the Ubuntu production server).
+_LINUX_FFMPEG_CANDIDATES = [
+    "/usr/bin",
+    "/usr/local/bin",
+    "/opt/ffmpeg/bin",
+    "/snap/bin",
+]
+
+
+def _find_ffmpeg_binary(name: str) -> str | None:
+    """
+    Resolve the path to an FFmpeg binary (ffmpeg or ffprobe).
+
+    Resolution order:
+    1. FFMPEG_BIN setting from .env (explicit override — highest priority).
+    2. shutil.which(name) — finds the binary if it is on the inherited PATH.
+    3. Platform-specific fallback locations (for processes that don't inherit
+       the shell PATH, e.g. Celery workers started from a bare terminal).
+
+    Returns the absolute path string, or None if not found.
+    """
+    import os
+
+    # 1. Explicit override from settings.
+    from app.config import settings
+    if settings.ffmpeg_bin:
+        candidate = Path(settings.ffmpeg_bin) / (name + (".exe" if sys.platform == "win32" else ""))
+        if candidate.exists():
+            return str(candidate)
+        logger.warning("FFMPEG_BIN is set to %r but %s was not found there.", settings.ffmpeg_bin, name)
+
+    # 2. Standard PATH lookup (refreshing PATH from the OS registry on Windows).
+    if sys.platform == "win32":
+        # The worker process may not have inherited the updated User PATH.
+        # Re-read it from the registry and prepend it to the subprocess search.
+        machine_path = os.environ.get("PATH", "")
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                user_path, _ = winreg.QueryValueEx(key, "Path")
+            # Temporarily extend os.environ for this lookup only.
+            original = os.environ["PATH"]
+            os.environ["PATH"] = user_path + ";" + machine_path
+            found = shutil.which(name)
+            os.environ["PATH"] = original
+            if found:
+                return found
+        except Exception:
+            pass
+
+    found = shutil.which(name)
+    if found:
+        return found
+
+    # 3. Platform fallback scan.
+    exe_name = name + (".exe" if sys.platform == "win32" else "")
+    if sys.platform == "win32":
+        import os as _os
+        # Expand {user} placeholder.
+        user_home = _os.path.expanduser("~")
+        username = _os.path.basename(user_home)
+        # Walk the winget packages directory for any FFmpeg variant.
+        winget_base = Path(user_home) / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+        if winget_base.exists():
+            for pkg_dir in winget_base.iterdir():
+                if "FFmpeg" in pkg_dir.name or "ffmpeg" in pkg_dir.name:
+                    for bin_dir in pkg_dir.rglob("bin"):
+                        candidate = bin_dir / exe_name
+                        if candidate.exists():
+                            return str(candidate)
+        # Fixed locations.
+        for loc in [r"C:\Program Files\FFmpeg\bin", r"C:\FFmpeg\bin", r"C:\tools\ffmpeg\bin"]:
+            candidate = Path(loc) / exe_name
+            if candidate.exists():
+                return str(candidate)
+    else:
+        for loc in _LINUX_FFMPEG_CANDIDATES:
+            candidate = Path(loc) / exe_name
+            if candidate.exists():
+                return str(candidate)
+
+    return None
+
+
+def _require_ffmpeg_binary(name: str) -> str:
+    """
+    Return the path to an FFmpeg binary or raise a clear RuntimeError.
+    """
+    path = _find_ffmpeg_binary(name)
+    if path:
+        return path
+    if sys.platform == "win32":
+        install_hint = "`winget install Gyan.FFmpeg` — then restart the terminal/worker."
+        config_hint = (
+            "Or set FFMPEG_BIN in .env to the directory containing ffprobe.exe, e.g.:\n"
+            r"  FFMPEG_BIN=C:/Users/YourName/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_.../ffmpeg-9.0.2-full_build/bin"
+        )
+    else:
+        install_hint = "`apt install ffmpeg` (Debian/Ubuntu) or `dnf install ffmpeg` (Fedora)."
+        config_hint = "Or set FFMPEG_BIN in .env to the directory containing ffprobe."
+    raise RuntimeError(
+        f"{name} not found on PATH or in any known location.\n"
+        f"Install FFmpeg: {install_hint}\n{config_hint}"
+    )
+
+
 def _compute_checksum(path: Path, chunk_size: int = 1024 * 1024) -> str:
     """Compute the SHA-256 checksum of a file on disk."""
     h = hashlib.sha256()
@@ -60,17 +178,18 @@ def _extract_video_metadata(path: Path) -> dict:
     Run ffprobe and return a dict with duration_ms, width, height,
     fps_num, fps_den, and codec.
 
-    Raises RuntimeError if ffprobe fails or produces unexpected output.
+    Uses _require_ffmpeg_binary() which checks PATH, the FFMPEG_BIN setting,
+    and platform-specific fallback locations.  This handles the common Windows
+    case where winget installed FFmpeg to the User PATH but the Celery worker
+    process was started before the PATH was refreshed.
+
+    Raises RuntimeError if ffprobe is not found or produces unexpected output.
     """
-    if not shutil.which("ffprobe"):
-        raise RuntimeError(
-            "ffprobe is not on PATH. "
-            "Install FFmpeg (e.g. `winget install Gyan.FFmpeg` on Windows, "
-            "`apt install ffmpeg` on Debian/Ubuntu)."
-        )
+    ffprobe = _require_ffmpeg_binary("ffprobe")
+    logger.debug("Using ffprobe: %s", ffprobe)
 
     cmd = [
-        "ffprobe",
+        ffprobe,
         "-v", "quiet",
         "-print_format", "json",
         "-show_streams",
