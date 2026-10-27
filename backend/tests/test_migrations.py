@@ -78,8 +78,8 @@ class TestAlembicMigrations:
         assert "assets" not in tables
         assert "analysis_runs" not in tables
 
-    def test_revision_is_0001(self, disposable_db):
-        """After upgrade head, alembic_version must be 0001."""
+    def test_revision_is_0002(self, disposable_db):
+        """After upgrade head, alembic_version must be 0002."""
         db_path, db_url = disposable_db
         _run_alembic("upgrade head", db_url, cwd=_BACKEND_DIR)
         conn = sqlite3.connect(db_path)
@@ -88,7 +88,7 @@ class TestAlembicMigrations:
         row = cur.fetchone()
         conn.close()
         assert row is not None
-        assert row[0] == "0001"
+        assert row[0] == "0002"
 
     def test_shared_importable_without_pythonpath(self, disposable_db):
         """
@@ -121,10 +121,25 @@ def _assert_schema(db_path: Path) -> None:
     assert "matches" in tables, f"matches table missing; tables: {tables}"
     assert "assets" in tables, f"assets table missing"
     assert "analysis_runs" in tables, f"analysis_runs table missing"
+    # Phase 2 vision tables.
+    assert "player_tracks" in tables, f"player_tracks table missing; tables: {tables}"
+    assert "pose_frames" in tables, f"pose_frames table missing; tables: {tables}"
+    assert "user_corrections" in tables, f"user_corrections table missing; tables: {tables}"
 
     cur.execute("SELECT name FROM sqlite_master WHERE type='index'")
     indexes = {r[0] for r in cur.fetchall()}
     assert "ix_matches_status" in indexes
     assert "ix_assets_match_id" in indexes
     assert "ix_analysis_runs_match_id" in indexes
+    # Phase 2 single-column indexes.
+    assert "ix_player_tracks_analysis_run_id" in indexes
+    assert "ix_pose_frames_analysis_run_id" in indexes
+    assert "ix_pose_frames_player_track_id" in indexes
+    # Phase 2 composite indexes.
+    assert "ix_pose_frames_run_time" in indexes, (
+        f"composite index ix_pose_frames_run_time missing; indexes: {indexes}"
+    )
+    assert "ix_pose_frames_track_frame" in indexes, (
+        f"composite index ix_pose_frames_track_frame missing; indexes: {indexes}"
+    )
     conn.close()

@@ -82,6 +82,20 @@ def mark_run_started(db: Session, run: AnalysisRun, stage: str) -> None:
     db.commit()
 
 
+def mark_vision_started(db: Session, run: AnalysisRun, stage: str) -> None:
+    """Mark a run as actively processing the Phase 2 vision pipeline.
+
+    Additive helper (does not touch the ingestion path).  Sets the run to
+    PROCESSING, records the start time and current vision stage, and resets
+    progress so the frontend poller shows fresh vision progress.
+    """
+    run.status = AnalysisStatus.PROCESSING.value
+    run.started_at = datetime.now(timezone.utc)
+    run.current_stage = stage
+    run.progress_pct = 0
+    db.commit()
+
+
 def update_run_progress(
     db: Session, run: AnalysisRun, pct: int, stage: str
 ) -> None:

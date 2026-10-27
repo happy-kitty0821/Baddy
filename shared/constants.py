@@ -9,7 +9,30 @@ analysis-version bump, because stored data depends on them.
 # ── Pipeline versioning ────────────────────────────────────────────────────
 # Increment when the pipeline logic changes in a way that makes results
 # from different versions incompatible.
-PIPELINE_VERSION = "1.0.0"
+PIPELINE_VERSION = "2.0.0"
+
+# ── COCO keypoint skeleton (Phase 2 pose overlay) ─────────────────────────
+# The pose model predicts 17 COCO keypoints (0-indexed):
+#   0 nose, 1 left eye, 2 right eye, 3 left ear, 4 right ear,
+#   5 left shoulder, 6 right shoulder, 7 left elbow, 8 right elbow,
+#   9 left wrist, 10 right wrist, 11 left hip, 12 right hip,
+#   13 left knee, 14 right knee, 15 left ankle, 16 right ankle.
+COCO_KEYPOINT_COUNT = 17
+
+# Skeleton connection pairs (0-indexed keypoint indices).  Drawn as lines
+# between two keypoints by the frontend overlay.  Grouped as:
+#   face  (0,1)(0,2)(1,3)(2,4)(1,2)(3,4)
+#   torso (5,6)(5,11)(6,12)(11,12)
+#   arms  (5,7)(7,9)(6,8)(8,10)
+#   legs  (11,13)(13,15)(12,14)(14,16)
+#   head-torso (0,5)
+COCO_SKELETON_CONNECTIONS = [
+    (0, 1), (0, 2), (1, 3), (2, 4), (1, 2), (3, 4),   # face
+    (5, 6), (5, 11), (6, 12), (11, 12),               # torso
+    (5, 7), (7, 9), (6, 8), (8, 10),                  # arms
+    (11, 13), (13, 15), (12, 14), (14, 16),           # legs
+    (0, 5),                                            # head-torso
+]
 
 # ── Court dimensions (BWF standard, metres) ───────────────────────────────
 # Origin (0, 0) is the top-left corner of the court in the normalised

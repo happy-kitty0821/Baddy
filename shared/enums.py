@@ -63,3 +63,13 @@ class ReviewStatus(str, Enum):
     AUTO = "auto"
     REVIEWED = "reviewed"
     CORRECTED = "corrected"
+
+
+class VisionStage(str, Enum):
+    """Stages of the Phase 2 vision pipeline (player detection + pose)."""
+    LOAD_VIDEO = "load_video"
+    LOAD_MODEL = "load_model"
+    DETECT_PLAYERS = "detect_players"
+    TRACK_AND_POSE = "track_and_pose"
+    SAVE_RESULTS = "save_results"
+    FINALIZE = "finalize"

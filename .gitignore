@@ -42,7 +42,10 @@ data/
 *.db-shm
 
 # ── Model weights ────────────────────────────────────────────────────────
-models/
+# Anchored to the repo root so it ignores only the top-level weights dir,
+# not code directories named "models" (backend/app/models/, worker/models/).
+# The unanchored `models/` form silently excluded those code dirs from git.
+/models/
 
 # ── Environment secrets ──────────────────────────────────────────────────
 .env
@@ -60,3 +63,5 @@ Thumbs.db
 # ── Docker volumes ───────────────────────────────────────────────────────
 postgres-data/
 redis-data/
+
+.agents

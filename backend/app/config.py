@@ -97,6 +97,22 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
 
+    # ── Vision / inference (Phase 2) ──────────────────────────────────────
+    # inference_device: "auto" uses CUDA when available, else CPU.
+    # Set to "cpu" to force CPU; "cuda" to require GPU (errors if unavailable).
+    inference_device: str = "auto"
+    # Target sample rate for the vision pipeline.  The worker dynamically
+    # computes a frame skip from the source fps so this is honoured for any
+    # source framerate (e.g. 30 or 60 fps).
+    vision_target_fps: int = 15
+    # Minimum detection confidence for a player/keypoint to be kept.
+    vision_confidence: float = 0.3
+    # YOLO inference image size (pixels, square).
+    vision_img_size: int = 640
+    # Optional directory for model weight files (.pt).  Empty uses the
+    # Ultralytics default cache location.
+    model_weights_dir: str = ""
+
     # ── FFmpeg / ffprobe location ──────────────────────────────────────────
     # Optional: set to the directory that contains ffmpeg.exe and ffprobe.exe
     # (or the binary symlinks on Linux).  Useful when the Celery worker process
