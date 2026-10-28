@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.player_track import PlayerTrack

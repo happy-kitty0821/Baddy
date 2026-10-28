@@ -83,6 +83,16 @@ export default function SkeletonOverlay({
       .finally(() => setLoaded(true));
   }, [runId, enabled]);
 
+  // Initial fetch of pose frames around timestamp 0.
+  // This breaks the chicken-and-egg: the renderer skips drawing when
+  // frames.size === 0, but fetchFrames was only called from inside the
+  // renderer.  By doing an initial fetch here, the renderer will have
+  // data to draw on the first timeupdate event.
+  useEffect(() => {
+    if (!runId || !enabled || !loaded) return;
+    fetchFrames(0);
+  }, [runId, enabled, loaded, fetchFrames]);
+
   // Fetch pose frames in a window around the current time.
   // Called lazily by the renderer when the time moves outside the loaded window.
   const fetchFrames = useCallback(async (centerTimeMs: number) => {
@@ -118,11 +128,15 @@ export default function SkeletonOverlay({
 
   // Create and register the renderer.
   const renderer = useCallback((ctx: CanvasRenderingContext2D, currentTime: number) => {
-    if (!enabled || !loaded || frames.size === 0) return;
-
     const currentTimeMs = Math.round(currentTime * 1000);
 
-    // Find the nearest frame (within 100ms tolerance).
+    // Always trigger fetch for the current time window — even if we have
+    // no frames yet, this ensures the next window is loaded proactively.
+    fetchFrames(currentTimeMs);
+
+    if (!enabled || !loaded || frames.size === 0) return;
+
+    // Find the nearest frame (within 200ms tolerance).
     let nearest: PoseFrame[] = [];
     let nearestDiff = Infinity;
     for (const [ts, fs] of frames) {
@@ -133,9 +147,6 @@ export default function SkeletonOverlay({
       }
     }
     if (nearest.length === 0) return;
-
-    // Trigger async fetch for the next window if we're at the edge.
-    fetchFrames(currentTimeMs);
 
     // Scale from source resolution to canvas size.
     const canvas = ctx.canvas;

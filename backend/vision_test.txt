@@ -1,0 +1,12 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-8.3.5, pluggy-1.7.0
+rootdir: C:\Users\User\Documents\Badminton AI Analysis\backend
+configfile: pyproject.toml
+plugins: anyio-4.15.1, asyncio-0.25.3, cov-6.1.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=function
+collected 26 items
+
+tests\test_vision_api.py ...........                                     [ 42%]
+tests\test_vision_worker.py ...............                              [100%]
+
+============================= 26 passed in 51.69s =============================

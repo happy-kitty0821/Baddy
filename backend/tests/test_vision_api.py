@@ -187,8 +187,12 @@ def test_start_vision_rejects_active_run(client, auth_headers, completed_run):
 # ── GET /tracks ───────────────────────────────────────────────────────────
 def test_list_tracks(client, auth_headers, completed_run, db_session):
     run_id = completed_run
-    _inject_track(db_session, run_id, track_id=1, label="player_1")
-    _inject_track(db_session, run_id, track_id=2, label="player_2")
+    track1 = _inject_track(db_session, run_id, track_id=1, label="player_1")
+    track2 = _inject_track(db_session, run_id, track_id=2, label="player_2")
+    # Inject enough pose frames so the tracks pass the minimum-frame filter.
+    for ts in range(0, 5000, 1000):
+        _inject_pose(db_session, run_id, track1, ts, ts // 100)
+        _inject_pose(db_session, run_id, track2, ts, ts // 100)
 
     r = client.get(f"/api/analyses/{run_id}/tracks", headers=auth_headers)
     assert r.status_code == 200, r.text
