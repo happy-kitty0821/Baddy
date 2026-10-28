@@ -73,28 +73,8 @@ export default function SkeletonOverlay({
   const [error, setError] = useState<string | null>(null);
   const fetchWindowRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
 
-  // Fetch tracks on mount.
-  useEffect(() => {
-    if (!runId || !enabled) return;
-    apiClient
-      .getTracks(runId)
-      .then(setTracks)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoaded(true));
-  }, [runId, enabled]);
-
-  // Initial fetch of pose frames around timestamp 0.
-  // This breaks the chicken-and-egg: the renderer skips drawing when
-  // frames.size === 0, but fetchFrames was only called from inside the
-  // renderer.  By doing an initial fetch here, the renderer will have
-  // data to draw on the first timeupdate event.
-  useEffect(() => {
-    if (!runId || !enabled || !loaded) return;
-    fetchFrames(0);
-  }, [runId, enabled, loaded, fetchFrames]);
-
-  // Fetch pose frames in a window around the current time.
-  // Called lazily by the renderer when the time moves outside the loaded window.
+  // ── fetchFrames: declared FIRST so useEffects below can reference it ──────
+  // Must come before any useEffect that lists fetchFrames as a dependency.
   const fetchFrames = useCallback(async (centerTimeMs: number) => {
     if (!runId) return;
     const windowMs = 10000; // 10-second window
@@ -126,7 +106,27 @@ export default function SkeletonOverlay({
     }
   }, [runId]);
 
-  // Create and register the renderer.
+  // ── Fetch tracks on mount ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!runId || !enabled) return;
+    apiClient
+      .getTracks(runId)
+      .then(setTracks)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoaded(true));
+  }, [runId, enabled]);
+
+  // ── Initial pose frame fetch ───────────────────────────────────────────────
+  // Breaks the chicken-and-egg: the renderer skips drawing when
+  // frames.size === 0, but fetchFrames was only called from inside the
+  // renderer.  By doing an initial fetch here, the renderer will have
+  // data to draw on the first timeupdate event.
+  useEffect(() => {
+    if (!runId || !enabled || !loaded) return;
+    fetchFrames(0);
+  }, [runId, enabled, loaded, fetchFrames]);
+
+  // ── Create and register the renderer ──────────────────────────────────────
   const renderer = useCallback((ctx: CanvasRenderingContext2D, currentTime: number) => {
     const currentTimeMs = Math.round(currentTime * 1000);
 
