@@ -170,8 +170,8 @@ export default function MatchDetail({ id }: MatchDetailProps) {
         </div>
       </div>
 
-      {/* Video player */}
-      {match.source_asset_id && match.status !== "pending" ? (
+      {/* Video player — shown as soon as the source asset exists, even before ingestion completes */}
+      {match.source_asset_id ? (
         <div className="space-y-2">
           <VideoPlayer
             assetId={match.source_asset_id}
@@ -213,9 +213,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
         </div>
       ) : (
         <div className="rounded-lg border border-dashed border-gray-700 flex items-center justify-center aspect-video">
-          <p className="text-gray-500 text-sm">
-            {match.status === "pending" ? "Video is being prepared…" : "No video available."}
-          </p>
+          <p className="text-gray-500 text-sm">No video available.</p>
         </div>
       )}
 

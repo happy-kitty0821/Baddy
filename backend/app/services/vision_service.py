@@ -22,11 +22,28 @@ from app.schemas.vision import CorrectionCreate, PlayerIdentityUpdate
 _MAX_POSE_LIMIT = 1000
 
 
-def get_tracks(db: Session, run_id: str) -> list[PlayerTrack]:
-    """Return all player tracks for an analysis run, ordered by track_id."""
+def get_tracks(db: Session, run_id: str, min_frames: int = 5) -> list[PlayerTrack]:
+    """
+    Return all player tracks for an analysis run, ordered by track_id.
+
+    Tracks with fewer than *min_frames* pose frames are filtered out —
+    ByteTrack creates spurious short-lived track IDs on every brief
+    detection loss, and these should not appear in the UI.
+    """
+    # Get track IDs that have at least min_frames pose frames.
+    track_ids_subq = (
+        db.query(PoseFrame.player_track_id)
+        .filter(PoseFrame.analysis_run_id == run_id)
+        .group_by(PoseFrame.player_track_id)
+        .having(func.count(PoseFrame.id) >= min_frames)
+    )
+    valid_ids = [row[0] for row in track_ids_subq]
+    if not valid_ids:
+        return []
     return (
         db.query(PlayerTrack)
         .filter(PlayerTrack.analysis_run_id == run_id)
+        .filter(PlayerTrack.id.in_(valid_ids))
         .order_by(PlayerTrack.track_id.asc())
         .all()
     )
