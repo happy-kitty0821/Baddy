@@ -83,7 +83,15 @@ export default function VideoPlayer({
   }, [onTimeUpdate]);
 
   const handleLoadedMetadata = useCallback(() => {
-    setDuration(videoRef.current?.duration ?? 0);
+    const v = videoRef.current;
+    const c = canvasRef.current;
+    if (!v) return;
+    setDuration(v.duration ?? 0);
+    // Sync canvas pixel dimensions to the video's rendered size immediately.
+    if (c) {
+      c.width = v.clientWidth || v.videoWidth;
+      c.height = v.clientHeight || v.videoHeight;
+    }
   }, []);
 
   const togglePlay = useCallback(() => {
@@ -132,6 +140,25 @@ export default function VideoPlayer({
     } else {
       setError("Video playback error. The file may be in an unsupported format.");
     }
+  }, []);
+
+  // Sync canvas pixel dimensions to video rendered size on resize.
+  useEffect(() => {
+    const syncCanvasSize = () => {
+      const v = videoRef.current;
+      const c = canvasRef.current;
+      if (v && c && v.clientWidth > 0) {
+        c.width = v.clientWidth;
+        c.height = v.clientHeight;
+      }
+    };
+    window.addEventListener("resize", syncCanvasSize);
+    // Also sync after a short delay in case layout hasn't settled yet.
+    const t = setTimeout(syncCanvasSize, 200);
+    return () => {
+      window.removeEventListener("resize", syncCanvasSize);
+      clearTimeout(t);
+    };
   }, []);
 
   // Keyboard shortcuts

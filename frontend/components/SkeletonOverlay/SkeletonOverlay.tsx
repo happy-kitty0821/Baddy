@@ -76,7 +76,7 @@ export default function SkeletonOverlay({
   // ── fetchFrames: declared FIRST so useEffects below can reference it ──────
   // Must come before any useEffect that lists fetchFrames as a dependency.
   const fetchFrames = useCallback(async (centerTimeMs: number) => {
-    if (!runId) return;
+    if (!runId || isNaN(centerTimeMs) || centerTimeMs < 0) return;
     const windowMs = 10000; // 10-second window
     const start = Math.max(0, centerTimeMs - windowMs / 2);
     const end = centerTimeMs + windowMs / 2;
@@ -129,6 +129,9 @@ export default function SkeletonOverlay({
   // ── Create and register the renderer ──────────────────────────────────────
   const renderer = useCallback((ctx: CanvasRenderingContext2D, currentTime: number) => {
     const currentTimeMs = Math.round(currentTime * 1000);
+
+    // Guard: currentTime is NaN before video metadata loads.
+    if (isNaN(currentTimeMs)) return;
 
     // Always trigger fetch for the current time window — even if we have
     // no frames yet, this ensures the next window is loaded proactively.

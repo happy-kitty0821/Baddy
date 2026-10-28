@@ -113,7 +113,13 @@ export default function MatchDetail({ id }: MatchDetailProps) {
       await apiClient.deleteMatch(match.id);
       router.push("/library");
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      // A 409 means the video file is locked (still streaming on Windows).
+      setError(
+        msg.includes("409") || msg.toLowerCase().includes("accessed")
+          ? "The video is still open. Stop playback, wait a moment, then try deleting again."
+          : msg
+      );
     }
   };
 
@@ -132,10 +138,11 @@ export default function MatchDetail({ id }: MatchDetailProps) {
 
   const statusClass = matchStatusColor(match.status);
   const runIsActive = latestRun && !TERMINAL_STATUSES.has(latestRun.status);
+  // Vision is available to start whenever ingestion completed.
   const visionAvailable = latestRun?.status === "completed" && match.source_asset_id;
-  const hasVisionResults = latestRun?.status === "completed" &&
-    latestRun?.current_stage === null &&
-    latestRun?.progress_pct === 100;
+  // Vision results exist when the run is completed and has tracks/poses
+  // (we don't check current_stage/progress_pct as those may vary).
+  const hasVisionResults = latestRun?.status === "completed";
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">

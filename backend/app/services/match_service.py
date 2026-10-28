@@ -96,8 +96,14 @@ def delete_match(
     Delete a match and all its associated assets from storage and the database.
 
     The original video is permanently removed.  This operation is irreversible.
+
+    Windows note: On Windows, a video file may be locked by an in-flight
+    streaming response.  If the file cannot be deleted because it is open,
+    we raise an HTTPException (409) so the caller can retry after the stream
+    closes.  The match record is NOT deleted in this case, so no data is lost.
     """
     from app.services.asset_service import get_match_assets
+    from fastapi import HTTPException, status as http_status
 
     assets = get_match_assets(db, match.id)
     for asset in assets:
@@ -105,6 +111,15 @@ def delete_match(
             storage.delete(asset.storage_key)
         except FileNotFoundError:
             pass  # File already gone; still remove the record.
+        except PermissionError as exc:
+            # File is locked (Windows: open by streaming handler).
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail=(
+                    "The video file is currently being accessed (e.g. by the video player). "
+                    "Stop playback and try again."
+                ),
+            ) from exc
 
     # Mark as deleted first in case the DB delete fails, so no orphan file
     # appears to be accessible.
