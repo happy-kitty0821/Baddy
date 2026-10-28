@@ -108,3 +108,54 @@ export interface UserRead {
 export interface APIError {
   detail: string | { msg: string; type: string }[];
 }
+
+// ── Phase 2: Vision ──────────────────────────────────────────────────────────
+
+export interface PlayerTrack {
+  id: string;
+  analysis_run_id: string;
+  track_id: number;
+  track_label: string;
+  is_selected_player: boolean;
+  identity_note: string | null;
+  identity_confidence: number | null;
+  created_at: string;
+}
+
+export interface PoseFrame {
+  id: string;
+  analysis_run_id: string;
+  player_track_id: string;
+  timestamp_ms: number;
+  frame_index: number;
+  bbox_x: number | null;
+  bbox_y: number | null;
+  bbox_w: number | null;
+  bbox_h: number | null;
+  bbox_conf: number | null;
+  keypoints: number[][]; // [[x, y, conf], ...] 17 COCO points in source pixels
+  overall_conf: number | null;
+  source_width: number;
+  source_height: number;
+  model_id: string | null;
+  created_at: string;
+}
+
+export interface PoseFrameListResponse {
+  items: PoseFrame[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+}
+
+export interface VisionCreate {
+  frame_skip?: number;
+  confidence?: number;
+  device?: string;
+}
+
+export interface PlayerIdentityUpdate {
+  is_selected_player?: boolean;
+  identity_note?: string | null;
+}

@@ -15,40 +15,39 @@ It is updated as models are tested.
 
 ---
 
-## Player detection
+## Player detection + pose estimation
 
-### Candidates
-
-| Model | License | CPU feasible? | Status |
-|---|---|---|---|
-| YOLOv8n | AGPL-3.0 | To be tested | Not evaluated |
-| YOLOv8s | AGPL-3.0 | To be tested | Not evaluated |
-
-### Evaluation protocol
-
-- Input: 60-second MP4, 1920×1080, 30 fps
-- Metric: frames per second on CPU, peak RAM
-- Accept if: >2 fps (30× slower than real-time is acceptable for batch processing)
-
-### Results
-
-*No results yet — Phase 2 not started.*
-
----
-
-## Pose estimation
-
-### Candidates
+### Selected model
 
 | Model | License | CPU feasible? | Status |
 |---|---|---|---|
-| MediaPipe Pose (Lite) | Apache 2.0 | Likely yes | Not evaluated |
-| MediaPipe Pose (Full) | Apache 2.0 | Likely yes | Not evaluated |
-| YOLOv8n-pose | AGPL-3.0 | To be tested | Not evaluated |
+| YOLO11n-pose (Ultralytics) | AGPL-3.0 | Yes (slow, ~2-5 fps) | **Selected** |
 
-### Results
+YOLO11n-pose provides detection + 17 COCO keypoints + ByteTrack tracking in a single pass.
+AGPL-3.0 is acceptable for personal/non-distributed use.
 
-*No results yet — Phase 2 not started.*
+### Hardware
+
+| Machine | GPU | Driver | CUDA | Status |
+|---|---|---|---|---|
+| Windows dev | None (Intel UHD 630) | N/A | N/A | CPU-only (dev/testing) |
+| Ubuntu VM | RTX 5060 Ti 16GB | 595.91.07 | 13.2 | **Verified** — GPU available, 0% util |
+
+### PyTorch compatibility
+
+RTX 5060 Ti is Blackwell (sm_120). Requires PyTorch built with CUDA 12.8+ (cu128).
+- CPU build: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+- GPU build: `pip install torch --index-url https://download.pytorch.org/whl/cu128`
+
+### GPU benchmark
+
+*Not yet performed — requires installing torch+cu128 on the Ubuntu VM.*
+
+Before production:
+1. Install `torch` cu128 + `ultralytics` + `opencv-python-headless` on the Ubuntu VM
+2. Run `python -c "import torch; print(torch.cuda.is_available())"` to confirm
+3. Process a 60-second clip and record: fps, VRAM usage, detection quality
+4. Check if Ollama can run simultaneously without VRAM contention
 
 ---
 

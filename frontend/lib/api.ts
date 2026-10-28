@@ -17,8 +17,12 @@ import type {
   MatchCreate,
   MatchListResponse,
   MatchRead,
+  PlayerIdentityUpdate,
+  PlayerTrack,
+  PoseFrameListResponse,
   TokenResponse,
   UserRead,
+  VisionCreate,
 } from "@/types/api";
 
 const API_BASE = "/api";
@@ -176,6 +180,49 @@ function getAssetStreamUrl(assetId: string): string {
   return `${API_BASE}/assets/${assetId}/stream`;
 }
 
+// ── Vision (Phase 2) ──────────────────────────────────────────────────────────
+
+async function startVision(
+  runId: string,
+  options?: VisionCreate
+): Promise<AnalysisRunRead> {
+  return apiFetch<AnalysisRunRead>(`/analyses/${runId}/vision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options ?? {}),
+  });
+}
+
+async function getTracks(runId: string): Promise<PlayerTrack[]> {
+  return apiFetch<PlayerTrack[]>(`/analyses/${runId}/tracks`);
+}
+
+async function getPoses(
+  runId: string,
+  params?: { start_ms?: number; end_ms?: number; track_id?: string; limit?: number; offset?: number }
+): Promise<PoseFrameListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.start_ms != null) qs.set("start_ms", String(params.start_ms));
+  if (params?.end_ms != null) qs.set("end_ms", String(params.end_ms));
+  if (params?.track_id) qs.set("track_id", params.track_id);
+  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.offset) qs.set("offset", String(params.offset));
+  const query = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch<PoseFrameListResponse>(`/analyses/${runId}/poses${query}`);
+}
+
+async function updatePlayerIdentity(
+  runId: string,
+  trackId: string,
+  data: PlayerIdentityUpdate
+): Promise<PlayerTrack> {
+  return apiFetch<PlayerTrack>(`/analyses/${runId}/tracks/${trackId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
 function getAssetStreamUrlWithToken(assetId: string): string {
   // For use in <video src="..."> where we can't set headers.
   // The backend must accept the token as a query param too (Phase 2).
@@ -209,6 +256,11 @@ const apiClient = {
   // assets
   getAssetStreamUrl,
   getAssetStreamUrlWithToken,
+  // vision (Phase 2)
+  startVision,
+  getTracks,
+  getPoses,
+  updatePlayerIdentity,
 };
 
 export default apiClient;

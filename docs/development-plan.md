@@ -51,22 +51,33 @@ Before any production deployment:
 
 ---
 
-## Phase 2 — Player detection and skeleton
+## Phase 2 — Player detection and skeleton ✅
 
 **Prerequisites:**
-- Phase 1 complete and tested.
-- CPU inference speed benchmarked on this hardware.
-- Model licenses confirmed.
+- Phase 1 complete and tested. ✅
+- GPU verified on Ubuntu VM (RTX 5060 Ti, driver 595.91, CUDA 13.2). ✅
+- Model licenses confirmed (AGPL-3.0, personal use). ✅
 
-**Models to evaluate:**
-- Player detection: YOLOv8n (Ultralytics AGPL-3.0)
-- Pose estimation: MediaPipe Pose (Apache 2.0)
+**Models used:**
+- Player detection + pose estimation: YOLO11n-pose (Ultralytics, AGPL-3.0)
 - Tracking: ByteTrack (built into Ultralytics)
 
-**Feasibility experiment required first:**
-Run YOLOv8n + MediaPipe Pose on a 60-second test clip on the Windows dev machine.
-Record: frames processed per second, total wall-clock time, peak RAM usage.
-If too slow: evaluate frame-skipping, lower resolution, or lighter models.
+**Implementation:**
+- Migration `0002`: `player_tracks`, `pose_frames`, `user_corrections` tables
+- Vision API: `POST /vision`, `GET /tracks`, `GET /poses`, `PATCH /tracks/{id}`, `POST /corrections`
+- Worker: `worker/tasks/vision.py` with YOLO11n-pose adapter
+- Frontend: `SkeletonOverlay` component + `PlayerPanel` for identity selection
+- Dynamic frame skip: `frame_skip = max(1, round(source_fps / target_fps))` — handles 30/60 fps
+
+**Test results:**
+- 77 backend tests (62 Phase 1 + 15 vision worker), all pass
+- Frontend build: 7 routes, type check clean
+- Migration 0002 verified on disposable SQLite DB
+
+**Still required before production:**
+1. Install `torch` (cu128) + `ultralytics` + `opencv-python-headless` on the Ubuntu VM
+2. Benchmark a real badminton clip on the GPU
+3. Run a real vision analysis on a match and verify the skeleton overlay renders correctly in the browser
 
 ---
 

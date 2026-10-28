@@ -1,8 +1,13 @@
 /**
- * UploadForm — handles file selection, validation, upload, and job tracking.
+ * UploadForm — handles file selection, validation, and upload.
  *
  * The upload is sent as multipart/form-data to POST /api/matches.
- * The user can navigate away after upload starts; the background job continues.
+ * On success, the user is redirected to the match detail page.
+ *
+ * Processing status is shown on the match detail page (not here) because
+ * it fetches the analysis run from the database — that survives browser
+ * reloads.  Keeping processing state in React state on this page would
+ * lose it on reload.
  *
  * Client-side validation:
  *   - Checks file extension and MIME type.
@@ -13,9 +18,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AnalysisRunRead, MatchRead } from "@/types/api";
 import apiClient from "@/lib/api";
-import ProcessingStatus from "@/components/ProcessingStatus/ProcessingStatus";
 import { formatFileSize } from "@/lib/utils";
 
 const ALLOWED_EXTENSIONS = new Set([
@@ -28,8 +31,6 @@ type UploadState =
   | { phase: "idle" }
   | { phase: "selected"; file: File }
   | { phase: "uploading"; file: File; progress: number }
-  | { phase: "processing"; match: MatchRead; runId: string }
-  | { phase: "done"; match: MatchRead }
   | { phase: "error"; message: string };
 
 export default function UploadForm() {
@@ -90,24 +91,11 @@ export default function UploadForm() {
 
       try {
         const match = await apiClient.uploadMatch(formData);
-
-        // Find the analysis run for this match.
-        // The upload endpoint creates one automatically.
-        // For simplicity, start a new analysis run if needed.
-        let runId: string | null = null;
-        try {
-          const run = await apiClient.startAnalysis(match.id);
-          runId = run.id;
-        } catch (analysisErr) {
-          // A 409 means a run already exists (created by the upload endpoint).
-          // We'll surface processing status on the match page instead.
-        }
-
-        if (runId) {
-          setState({ phase: "processing", match, runId });
-        } else {
-          setState({ phase: "done", match });
-        }
+        // Redirect to the match detail page immediately.
+        // The match detail page fetches the latest analysis run from the
+        // database and shows ProcessingStatus — this survives browser
+        // reloads because the run state is persisted server-side.
+        router.push(`/matches/${match.id}`);
       } catch (e) {
         setState({
           phase: "error",
@@ -115,28 +103,7 @@ export default function UploadForm() {
         });
       }
     },
-    [state, title, opponentLabel, notes]
-  );
-
-  const handleComplete = useCallback(
-    (run: AnalysisRunRead) => {
-      if (state.phase === "processing") {
-        setState({ phase: "done", match: state.match });
-      }
-    },
-    [state]
-  );
-
-  const handleProcessingError = useCallback(
-    (run: AnalysisRunRead) => {
-      if (state.phase === "processing") {
-        setState({
-          phase: "error",
-          message: run.error_message || "Processing failed.",
-        });
-      }
-    },
-    [state]
+    [state, title, opponentLabel, notes, router]
   );
 
   const reset = () => {
@@ -146,55 +113,6 @@ export default function UploadForm() {
     setNotes("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
-
-  // ── Done state ─────────────────────────────────────────────────────────────
-  if (state.phase === "done") {
-    return (
-      <div className="rounded-lg border border-green-700 bg-green-900/30 p-6 text-center space-y-4">
-        <div className="text-4xl">✅</div>
-        <h2 className="text-lg font-semibold text-white">
-          {state.match.title} is ready.
-        </h2>
-        <div className="flex justify-center gap-3">
-          <button
-            onClick={() => router.push(`/matches/${state.match.id}`)}
-            className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500"
-          >
-            Open Match
-          </button>
-          <button
-            onClick={reset}
-            className="rounded-md border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700"
-          >
-            Upload Another
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Processing state ───────────────────────────────────────────────────────
-  if (state.phase === "processing") {
-    return (
-      <div className="space-y-4">
-        <p className="text-sm text-gray-400">
-          Your video is being processed in the background. You can navigate away
-          and come back — it will continue independently.
-        </p>
-        <ProcessingStatus
-          runId={state.runId}
-          onComplete={handleComplete}
-          onError={handleProcessingError}
-        />
-        <button
-          onClick={() => router.push(`/matches/${state.match.id}`)}
-          className="text-sm text-green-400 hover:text-green-300"
-        >
-          Open match page →
-        </button>
-      </div>
-    );
-  }
 
   // ── Upload form ────────────────────────────────────────────────────────────
   return (

@@ -44,6 +44,7 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=[
         "worker.tasks.ingestion",
+        "worker.tasks.vision",
     ],
 )
 
