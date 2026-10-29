@@ -183,11 +183,21 @@ def query_poses(
     start_ms: int | None = None,
     end_ms: int | None = None,
     track_id: str | None = None,
+    court_side: str | None = None,
     limit: int = 500,
     offset: int = 0,
 ) -> tuple[list[PoseFrame], int]:
     """
     Query pose frames for a run, ordered by timestamp_ms.
+
+    Optional filters:
+      start_ms / end_ms — time window.
+      track_id          — only poses for a specific track.
+      court_side        — "near" (bottom half, closer to camera) or
+                          "far" (top half, further from camera).
+                          Uses per-frame bbox Y centre vs source_height / 2.
+                          This is per-FRAME, not per-track, so ByteTrack
+                          re-ID issues don't affect the split.
 
     Returns (items, total) where total ignores pagination.
     limit is clamped to [1, 1000].
@@ -202,6 +212,18 @@ def query_poses(
         query = query.filter(PoseFrame.timestamp_ms <= end_ms)
     if track_id is not None:
         query = query.filter(PoseFrame.player_track_id == track_id)
+
+    if court_side is not None:
+        # Per-frame court half: bbox_y + bbox_h/2 vs source_height/2.
+        # Near end = player is in the bottom half of the frame (Y >= 50%).
+        # Far end  = player is in the top half of the frame (Y < 50%).
+        # Use coalesce to handle NULL bbox values safely.
+        bbox_centre = PoseFrame.bbox_y + (PoseFrame.bbox_h / 2.0)
+        half = PoseFrame.source_height / 2.0
+        if court_side == "near":
+            query = query.filter(bbox_centre >= half)
+        elif court_side == "far":
+            query = query.filter(bbox_centre < half)
 
     total = query.count()
     items = (

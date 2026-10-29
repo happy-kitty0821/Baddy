@@ -202,7 +202,19 @@ def _extract_video_metadata(path: Path) -> dict:
             f"ffprobe failed (exit {result.returncode}): {result.stderr[:500]}"
         )
 
-    data = json.loads(result.stdout)
+    if not result.stdout or not result.stdout.strip():
+        raise RuntimeError(
+            f"ffprobe returned empty output (exit {result.returncode}). "
+            "The file may be corrupt or in an unsupported format."
+        )
+
+    try:
+        data = json.loads(result.stdout)
+    except Exception as exc:
+        raise RuntimeError(
+            f"ffprobe output could not be parsed as JSON: {exc!r}. "
+            f"stdout (first 200): {result.stdout[:200]!r}"
+        ) from exc
     video_stream = next(
         (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
         None,

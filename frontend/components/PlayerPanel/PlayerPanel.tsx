@@ -23,12 +23,14 @@ import apiClient from "@/lib/api";
 interface PlayerPanelProps {
   runId: string;
   sourceHeight?: number;
+  onSideSelected?: (side: "near" | "far" | null) => void;
   onTracksUpdated?: () => void;
 }
 
 export default function PlayerPanel({
   runId,
   sourceHeight = 1080,
+  onSideSelected,
   onTracksUpdated,
 }: PlayerPanelProps) {
   const [assignment, setAssignment] = useState<CourtHalfAssignment | null>(null);
@@ -74,6 +76,9 @@ export default function PlayerPanel({
           is_selected_player: false,
         });
       }
+      // Determine which court side was selected and notify parent.
+      const side = assignment.near_end?.id === track.id ? "near" : "far";
+      onSideSelected?.(side);
       // Refresh the assignment.
       await runAutoAssign();
       onTracksUpdated?.();

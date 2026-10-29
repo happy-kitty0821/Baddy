@@ -44,14 +44,15 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [showBoxes, setShowBoxes] = useState(true);
   const [showTrackIds, setShowTrackIds] = useState(true);
   const [visionStarted, setVisionStarted] = useState(false);
+  // Which court side's skeleton to show: null = both, "near" or "far".
+  const [selectedCourtSide, setSelectedCourtSide] = useState<"near" | "far" | null>(null);
   // Store the overlay renderer in a ref (not state) to avoid React treating
   // the function as an updater when passed to useState.
-  const overlayRendererRef = useRef<((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null>(null);
-  const [renderTick, setRenderTick] = useState(0);
+  const overlayRendererRef = useRef<((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null>(null);  const [renderTick, setRenderTick] = useState(0);
   const setOverlayRenderer = useCallback(
-    (fn: (ctx: CanvasRenderingContext2D, currentTime: number) => void) => {
+    (fn: ((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null) => {
       overlayRendererRef.current = fn;
-      setRenderTick((n) => n + 1); // trigger re-render so VideoPlayer gets the new renderer
+      setRenderTick((n) => n + 1);
     },
     []
   );
@@ -213,6 +214,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
               enabled={showSkeleton}
               showBoxes={showBoxes}
               showTrackIds={showTrackIds}
+              courtSide={selectedCourtSide}
               sourceWidth={match.width || 1920}
               sourceHeight={match.height || 1080}
               onRendererReady={setOverlayRenderer}
@@ -238,6 +240,14 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                 className="accent-green-500" />
               Track IDs
             </label>
+            {selectedCourtSide && (
+              <button
+                onClick={() => setSelectedCourtSide(null)}
+                className="ml-auto rounded border border-gray-600 px-2 py-0.5 text-gray-400 hover:bg-gray-700 transition-colors"
+              >
+                Showing: {selectedCourtSide === "near" ? "Near End" : "Far End"} — click to show both
+              </button>
+            )}
           </div>
         </div>
       ) : (
@@ -309,6 +319,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
         <PlayerPanel
           runId={latestRun.id}
           sourceHeight={match.height || 1080}
+          onSideSelected={setSelectedCourtSide}
         />
       )}
 

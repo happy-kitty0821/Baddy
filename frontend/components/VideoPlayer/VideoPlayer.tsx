@@ -71,15 +71,11 @@ export default function VideoPlayer({
 
   // Draw overlay on canvas whenever currentTime changes.
   useEffect(() => {
-    if (!renderOverlay || !canvasRef.current || !videoRef.current) return;
+    if (!canvasRef.current || !videoRef.current) return;
     const canvas = canvasRef.current;
     const video = videoRef.current;
 
-    // Always sync canvas PIXEL dimensions to the video's RENDERED size before drawing.
-    // CSS sets the canvas to 100%×100% visually, but canvas drawing coordinates
-    // use the element's intrinsic width/height (default 300×150 if not set).
-    // Without this, coordinates drawn at e.g. x=960 on a 1920px source appear
-    // at 50% of 300px = 150px instead of 50% of the actual rendered width.
+    // Sync canvas pixel dimensions to the video's rendered size.
     if (video.clientWidth > 0 && video.clientHeight > 0) {
       if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
         canvas.width = video.clientWidth;
@@ -88,7 +84,14 @@ export default function VideoPlayer({
     }
 
     const ctx = canvas.getContext("2d");
-    if (ctx) renderOverlay(ctx, currentTime);
+    if (!ctx) return;
+
+    if (renderOverlay) {
+      renderOverlay(ctx, currentTime);
+    } else {
+      // No renderer registered — clear the canvas.
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
   }, [currentTime, renderOverlay]);
 
   const handleTimeUpdate = useCallback(() => {

@@ -150,15 +150,46 @@ def run_vision_sync(
         video_path = storage.resolve_path(asset.storage_key)
         update_run_progress(db, run, 5, VisionStage.LOAD_VIDEO.value)
 
-        # ── Step 2: Get source video fps and compute frame skip ────────────
-        # Use the stored fps from ingestion; fall back to cv2 if missing.
-        source_fps = match.fps_num / match.fps_den if match.fps_num and match.fps_den else 30.0
+        # ── Step 2: Check that ingestion metadata is present ──────────────
+        # If ingestion failed or was never run, fps_num/fps_den/width/height
+        # are all None.  We cannot run vision without this metadata.
+        if not match.fps_num or not match.fps_den:
+            # Attempt to read fps directly from the video file using cv2.
+            import cv2  # noqa: PLC0415
+            cap = cv2.VideoCapture(str(video_path))
+            fps_cv = cap.get(cv2.CAP_PROP_FPS)
+            width_cv = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height_cv = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+            if fps_cv > 0:
+                # Persist to the match record so future runs don't need this.
+                match.fps_num = int(round(fps_cv * 1000))
+                match.fps_den = 1000
+                if not match.width:
+                    match.width = width_cv
+                if not match.height:
+                    match.height = height_cv
+                db.commit()
+                logger.info("Read fps from cv2: %.2f  dims: %dx%d", fps_cv, width_cv, height_cv)
+            else:
+                # Cannot determine fps at all — fall back to 25.
+                logger.warning("Cannot determine fps for match %s — defaulting to 25", match_id)
+                match.fps_num = 25
+                match.fps_den = 1
+                if not match.width:
+                    match.width = width_cv or 1920
+                if not match.height:
+                    match.height = height_cv or 1080
+                db.commit()
+
+        # ── Step 3: Compute frame skip ────────────────────────────────────
+        source_fps = match.fps_num / match.fps_den if match.fps_num and match.fps_den else 25.0
         target_fps = settings.vision_target_fps
         frame_skip = _compute_frame_skip(source_fps, target_fps)
         logger.info("Source fps=%.1f, target_fps=%d, frame_skip=%d",
                     source_fps, target_fps, frame_skip)
 
-        # ── Step 3: Load the model ─────────────────────────────────────────
+        # ── Step 4: Load the model ─────────────────────────────────────────
         update_run_progress(db, run, 8, VisionStage.LOAD_MODEL.value)
 
         device = _resolve_device(settings.inference_device)
@@ -230,8 +261,8 @@ def run_vision_sync(
                         bbox_conf=det.bbox_conf,
                         keypoints_json=json.dumps(det.keypoints),
                         overall_conf=det.keypoint_conf,
-                        source_width=match.width or frame.shape[1],
-                        source_height=match.height or frame.shape[0],
+                        source_width=match.width or (frame.shape[1] if frame is not None else 1920),
+                        source_height=match.height or (frame.shape[0] if frame is not None else 1080),
                         model_id=det.model_id,
                     )
                     db.add(pf)

@@ -206,12 +206,13 @@ async function getTracks(runId: string): Promise<PlayerTrack[]> {
 
 async function getPoses(
   runId: string,
-  params?: { start_ms?: number; end_ms?: number; track_id?: string; limit?: number; offset?: number }
+  params?: { start_ms?: number; end_ms?: number; track_id?: string; court_side?: "near" | "far"; limit?: number; offset?: number }
 ): Promise<PoseFrameListResponse> {
   const qs = new URLSearchParams();
   if (params?.start_ms != null) qs.set("start_ms", String(params.start_ms));
   if (params?.end_ms != null) qs.set("end_ms", String(params.end_ms));
   if (params?.track_id) qs.set("track_id", params.track_id);
+  if (params?.court_side) qs.set("court_side", params.court_side);
   if (params?.limit) qs.set("limit", String(params.limit));
   if (params?.offset) qs.set("offset", String(params.offset));
   const query = qs.toString() ? `?${qs.toString()}` : "";

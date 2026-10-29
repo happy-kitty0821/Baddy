@@ -2,37 +2,36 @@
  * SkeletonOverlay — fetches pose data and renders a green skeleton overlay
  * on the video player canvas.
  *
- * Data flow:
- *   1. On mount, fetches all player tracks for the analysis run.
- *   2. Fetches pose frames in a time window around the current playback position.
- *   3. Caches frames in a Map keyed by timestamp_ms for O(1) lookup.
- *   4. The parent VideoPlayer calls renderOverlay(ctx, currentTime) on every
- *      timeupdate, which looks up the nearest frame and draws the skeleton.
+ * Architecture:
+ *   All mutable data (frames, tracks, fetch window) is stored in refs, not
+ *   React state.  This means the renderer closure is stable — it never goes
+ *   stale, never causes unnecessary re-renders, and always reads the latest
+ *   data via the ref.
+ *
+ *   Pre-loading: when the overlay mounts and data is ready, we eagerly fetch
+ *   the first 30 seconds so the first frame is drawn immediately.  As the
+ *   video plays, we fetch the next window 5 seconds before it's needed.
  *
  * Coordinate scaling:
  *   Pose keypoints are stored in source video pixels (e.g. 1920×1080).
- *   The canvas is sized to the displayed video element, so we scale:
+ *   The canvas is sized to the video element's rendered size, so we scale:
  *     scaleX = canvas.width / source_width
  *     scaleY = canvas.height / source_height
  *
- * Visual conventions:
- *   - Skeleton lines: green (#00ff00), alpha 0.8 for confident, 0.3 for uncertain.
- *   - Keypoints: green circles, larger for confident, small/dim for uncertain.
- *   - Bounding boxes: faint green outline (alpha 0.3).
- *   - Track IDs: drawn above the bounding box.
- *
- * Performance:
- *   The render function is called on every timeupdate (~4×/sec at normal speed).
- *   It only draws one frame's worth of data — no batch rendering.
+ * Tolerance:
+ *   The renderer looks for the nearest stored frame within ±50ms of the
+ *   current video time.  At 30fps one frame is 33ms, so this never shows
+ *   a frame that's more than ~1.5 frames stale.  If no frame is within
+ *   tolerance the canvas is cleared so there's no ghost/trailing image.
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { PoseFrame, PlayerTrack } from "@/types/api";
+import { useCallback, useEffect, useRef } from "react";
+import type { PoseFrame } from "@/types/api";
 import apiClient from "@/lib/api";
 
 // COCO 17-keypoint skeleton connections (0-indexed pairs).
-const SKELETON_CONNECTIONS = [
+const SKELETON_CONNECTIONS: [number, number][] = [
   [0, 1], [0, 2], [1, 3], [2, 4], [1, 2], [3, 4],   // face
   [5, 6], [5, 11], [6, 12], [11, 12],               // torso
   [5, 7], [7, 9], [6, 8], [8, 10],                  // arms
@@ -41,21 +40,23 @@ const SKELETON_CONNECTIONS = [
 ];
 
 const CONFIDENCE_THRESHOLD = 0.3;
+// Maximum milliseconds between the video time and a stored frame to still
+// draw it.  At 30fps a frame is 33ms; 50ms = ≤1.5 frames tolerance.
+// Below this the skeleton follows the player precisely with no trailing.
+const FRAME_TOLERANCE_MS = 50;
 
 interface SkeletonOverlayProps {
   runId: string;
-  /** Whether to show the skeleton overlay. */
   enabled: boolean;
-  /** Whether to show bounding boxes. */
   showBoxes: boolean;
-  /** Whether to show track IDs. */
   showTrackIds: boolean;
-  /** The source video width (for coordinate scaling). */
+  /** "near" or "far" to show only one court half; null = both. */
+  courtSide: "near" | "far" | null;
   sourceWidth: number;
-  /** The source video height (for coordinate scaling). */
   sourceHeight: number;
-  /** Called to register the overlay renderer with the parent. */
-  onRendererReady: (renderer: (ctx: CanvasRenderingContext2D, currentTime: number) => void) => void;
+  onRendererReady: (
+    renderer: ((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null
+  ) => void;
 }
 
 export default function SkeletonOverlay({
@@ -63,178 +64,205 @@ export default function SkeletonOverlay({
   enabled,
   showBoxes,
   showTrackIds,
+  courtSide,
   sourceWidth,
   sourceHeight,
   onRendererReady,
 }: SkeletonOverlayProps) {
-  const [tracks, setTracks] = useState<PlayerTrack[]>([]);
-  const [frames, setFrames] = useState<Map<number, PoseFrame[]>>(new Map());
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fetchWindowRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+  // ── All data in refs — no React state so the renderer never goes stale ───
+  // Map<timestamp_ms, PoseFrame[]>
+  const framesRef = useRef<Map<number, PoseFrame[]>>(new Map());
+  const fetchedWindowRef = useRef<{ start: number; end: number }>({ start: -1, end: -1 });
+  const fetchingRef = useRef(false);
+  const loadedRef = useRef(false);
 
-  // ── fetchFrames: declared FIRST so useEffects below can reference it ──────
-  // Must come before any useEffect that lists fetchFrames as a dependency.
-  const fetchFrames = useCallback(async (centerTimeMs: number) => {
-    if (!runId || isNaN(centerTimeMs) || centerTimeMs < 0) return;
-    const windowMs = 10000; // 10-second window
-    const start = Math.max(0, centerTimeMs - windowMs / 2);
-    const end = centerTimeMs + windowMs / 2;
+  // ── Fetch a window of poses ────────────────────────────────────────────────
+  const fetchWindow = useCallback(
+    async (centerMs: number, windowMs = 30000) => {
+      if (!runId || fetchingRef.current) return;
 
-    // Skip if we already have this window.
-    if (centerTimeMs >= fetchWindowRef.current.start &&
-        centerTimeMs <= fetchWindowRef.current.end) {
-      return;
-    }
+      const start = Math.max(0, centerMs - windowMs * 0.2);
+      const end = centerMs + windowMs * 0.8;
 
-    try {
-      const result = await apiClient.getPoses(runId, {
-        start_ms: start,
-        end_ms: end,
-        limit: 1000,
-      });
-      const newMap = new Map<number, PoseFrame[]>();
-      for (const f of result.items) {
-        const existing = newMap.get(f.timestamp_ms) ?? [];
-        existing.push(f);
-        newMap.set(f.timestamp_ms, existing);
+      // Skip if already loaded.
+      if (start >= fetchedWindowRef.current.start && end <= fetchedWindowRef.current.end) {
+        return;
       }
-      setFrames(newMap);
-      fetchWindowRef.current = { start, end };
-    } catch {
-      // Non-fatal — the overlay just won't render for this window.
-    }
-  }, [runId]);
 
-  // ── Fetch tracks on mount ──────────────────────────────────────────────────
+      fetchingRef.current = true;
+      try {
+        let offset = 0;
+        const limit = 1000;
+        const newMap = new Map<number, PoseFrame[]>(framesRef.current);
+
+        while (true) {
+          const result = await apiClient.getPoses(runId, {
+            start_ms: start,
+            end_ms: end,
+            court_side: courtSide ?? undefined,
+            limit,
+            offset,
+          });
+
+          for (const f of result.items) {
+            const existing = newMap.get(f.timestamp_ms) ?? [];
+            // Avoid exact duplicates from overlapping windows.
+            if (!existing.some((e) => e.id === f.id)) {
+              existing.push(f);
+            }
+            newMap.set(f.timestamp_ms, existing);
+          }
+
+          if (!result.has_more) break;
+          offset += limit;
+        }
+
+        framesRef.current = newMap;
+        fetchedWindowRef.current = { start, end };
+      } catch {
+        // Non-fatal — the overlay won't render for this window.
+      } finally {
+        fetchingRef.current = false;
+      }
+    },
+    [runId, courtSide]
+  );
+
+  // ── Load initial data on mount ─────────────────────────────────────────────
   useEffect(() => {
     if (!runId || !enabled) return;
-    apiClient
-      .getTracks(runId)
-      .then(setTracks)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoaded(true));
-  }, [runId, enabled]);
 
-  // ── Initial pose frame fetch ───────────────────────────────────────────────
-  // Breaks the chicken-and-egg: the renderer skips drawing when
-  // frames.size === 0, but fetchFrames was only called from inside the
-  // renderer.  By doing an initial fetch here, the renderer will have
-  // data to draw on the first timeupdate event.
-  useEffect(() => {
-    if (!runId || !enabled || !loaded) return;
-    fetchFrames(0);
-  }, [runId, enabled, loaded, fetchFrames]);
+    framesRef.current = new Map();
+    fetchedWindowRef.current = { start: -1, end: -1 };
+    loadedRef.current = false;
 
-  // ── Create and register the renderer ──────────────────────────────────────
-  const renderer = useCallback((ctx: CanvasRenderingContext2D, currentTime: number) => {
-    const currentTimeMs = Math.round(currentTime * 1000);
+    // Eagerly fetch the first 30 seconds so the first play is smooth.
+    fetchWindow(0, 30000).then(() => {
+      loadedRef.current = true;
+    });
+  }, [runId, enabled, courtSide, fetchWindow]);
 
-    // Guard: currentTime is NaN before video metadata loads.
-    if (isNaN(currentTimeMs)) return;
-
-    // Always trigger fetch for the current time window — even if we have
-    // no frames yet, this ensures the next window is loaded proactively.
-    fetchFrames(currentTimeMs);
-
-    if (!enabled || !loaded || frames.size === 0) return;
-
-    // Find the nearest frame (within 200ms tolerance).
-    let nearest: PoseFrame[] = [];
-    let nearestDiff = Infinity;
-    for (const [ts, fs] of frames) {
-      const diff = Math.abs(ts - currentTimeMs);
-      if (diff < nearestDiff && diff < 200) { // 200ms = ~6 frames at 30fps
-        nearestDiff = diff;
-        nearest = fs;
+  // ── Stable renderer — reads from refs, never becomes stale ───────────────
+  const renderer = useCallback(
+    (ctx: CanvasRenderingContext2D, currentTime: number) => {
+      if (!enabled) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        return;
       }
-    }
-    if (nearest.length === 0) return;
 
-    // Scale from source resolution to canvas size.
-    const canvas = ctx.canvas;
-    const scaleX = canvas.width / sourceWidth;
-    const scaleY = canvas.height / sourceHeight;
+      const currentTimeMs = Math.round(currentTime * 1000);
+      if (isNaN(currentTimeMs) || currentTimeMs < 0) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Pre-fetch the next window 5 seconds before it's needed.
+      const windowEnd = fetchedWindowRef.current.end;
+      if (windowEnd > 0 && currentTimeMs > windowEnd - 5000) {
+        fetchWindow(windowEnd, 30000);
+      }
 
-    for (const frame of nearest) {
-      const kps = frame.keypoints;
-      if (!kps || kps.length === 0) continue;
+      const frames = framesRef.current;
 
-      // Draw bounding box (faint).
-      if (showBoxes && frame.bbox_x != null && frame.bbox_y != null &&
-          frame.bbox_w != null && frame.bbox_h != null) {
-        const x = frame.bbox_x * scaleX;
-        const y = frame.bbox_y * scaleY;
-        const w = frame.bbox_w * scaleX;
-        const h = frame.bbox_h * scaleY;
-        const track = tracks.find((t) => t.id === frame.player_track_id);
-        const isMe = track?.is_selected_player;
-        ctx.strokeStyle = isMe ? "rgba(0, 255, 0, 0.6)" : "rgba(0, 200, 100, 0.3)";
-        ctx.lineWidth = isMe ? 2 : 1;
-        ctx.strokeRect(x, y, w, h);
+      // Find the nearest stored frame within FRAME_TOLERANCE_MS.
+      let nearest: PoseFrame[] | null = null;
+      let nearestDiff = Infinity;
 
-        // Track ID label.
-        if (showTrackIds && track) {
-          ctx.fillStyle = isMe ? "rgba(0, 255, 0, 0.9)" : "rgba(0, 200, 100, 0.6)";
-          ctx.font = "14px sans-serif";
-          ctx.fillText(
-            `${track.track_label}${isMe ? " (Me)" : ""}`,
-            x,
-            y - 5
-          );
+      for (const [ts, fs] of frames) {
+        const diff = Math.abs(ts - currentTimeMs);
+        if (diff < nearestDiff && diff <= FRAME_TOLERANCE_MS) {
+          nearestDiff = diff;
+          nearest = fs;
         }
       }
 
-      // Draw skeleton connections.
-      ctx.strokeStyle = "rgba(0, 255, 0, 0.8)";
-      ctx.lineWidth = 2;
-      for (const [a, b] of SKELETON_CONNECTIONS) {
-        if (a >= kps.length || b >= kps.length) continue;
-        const ka = kps[a];
-        const kb = kps[b];
-        if (!ka || !kb) continue;
-        const confA = ka[2] ?? 0;
-        const confB = kb[2] ?? 0;
-        // Skip connection if either endpoint is low confidence.
-        if (confA < CONFIDENCE_THRESHOLD || confB < CONFIDENCE_THRESHOLD) {
-          ctx.globalAlpha = 0.2;
-        } else {
-          ctx.globalAlpha = 0.8;
+      // Always clear — prevents ghost/trailing images when out of tolerance.
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+      if (!nearest || nearest.length === 0) return;
+
+      const canvas = ctx.canvas;
+      if (canvas.width === 0 || canvas.height === 0) return;
+
+      const scaleX = canvas.width / sourceWidth;
+      const scaleY = canvas.height / sourceHeight;
+
+      for (const frame of nearest) {
+        const kps = frame.keypoints;
+        if (!kps || kps.length === 0) continue;
+
+        // ── Bounding box ──────────────────────────────────────────────────
+        if (showBoxes && frame.bbox_x != null && frame.bbox_y != null &&
+            frame.bbox_w != null && frame.bbox_h != null) {
+          const bx = frame.bbox_x * scaleX;
+          const by = frame.bbox_y * scaleY;
+          const bw = frame.bbox_w * scaleX;
+          const bh = frame.bbox_h * scaleY;
+          ctx.globalAlpha = 0.4;
+          ctx.strokeStyle = "rgba(0, 255, 100, 1)";
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(bx, by, bw, bh);
+          ctx.globalAlpha = 1;
+
+          if (showTrackIds) {
+            ctx.fillStyle = "rgba(0, 255, 100, 0.8)";
+            ctx.font = "bold 12px sans-serif";
+            ctx.fillText("player", bx, by - 4);
+          }
         }
-        ctx.beginPath();
-        ctx.moveTo(ka[0] * scaleX, ka[1] * scaleY);
-        ctx.lineTo(kb[0] * scaleX, kb[1] * scaleY);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
 
-      // Draw keypoints.
-      for (let i = 0; i < kps.length; i++) {
-        const kp = kps[i];
-        if (!kp) continue;
-        const conf = kp[2] ?? 0;
-        const x = kp[0] * scaleX;
-        const y = kp[1] * scaleY;
-        ctx.beginPath();
-        ctx.arc(x, y, conf > CONFIDENCE_THRESHOLD ? 4 : 2, 0, Math.PI * 2);
-        ctx.fillStyle = conf > CONFIDENCE_THRESHOLD
-          ? "rgba(0, 255, 0, 0.9)"
-          : "rgba(0, 255, 0, 0.3)";
-        ctx.fill();
-      }
-    }
-  }, [enabled, loaded, frames, tracks, showBoxes, showTrackIds, sourceWidth, sourceHeight, fetchFrames]);
+        // ── Skeleton connections ──────────────────────────────────────────
+        for (const [a, b] of SKELETON_CONNECTIONS) {
+          if (a >= kps.length || b >= kps.length) continue;
+          const ka = kps[a];
+          const kb = kps[b];
+          if (!ka || !kb) continue;
+          const confA = ka[2] ?? 0;
+          const confB = kb[2] ?? 0;
+          const confident = confA > CONFIDENCE_THRESHOLD && confB > CONFIDENCE_THRESHOLD;
 
-  // Register the renderer with the parent whenever it changes.
+          ctx.beginPath();
+          ctx.moveTo(ka[0] * scaleX, ka[1] * scaleY);
+          ctx.lineTo(kb[0] * scaleX, kb[1] * scaleY);
+          ctx.strokeStyle = confident
+            ? "rgba(0, 255, 80, 0.9)"
+            : "rgba(0, 200, 60, 0.25)";
+          ctx.lineWidth = confident ? 2.5 : 1;
+          ctx.stroke();
+        }
+
+        // ── Keypoints ─────────────────────────────────────────────────────
+        for (let i = 0; i < kps.length; i++) {
+          const kp = kps[i];
+          if (!kp) continue;
+          const conf = kp[2] ?? 0;
+          if (conf < 0.15) continue; // skip very low confidence points entirely
+          const x = kp[0] * scaleX;
+          const y = kp[1] * scaleY;
+          const r = conf > CONFIDENCE_THRESHOLD ? 4 : 2.5;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fillStyle = conf > CONFIDENCE_THRESHOLD
+            ? "rgba(0, 255, 80, 1)"
+            : "rgba(0, 200, 60, 0.4)";
+          ctx.fill();
+        }
+      }
+    },
+    // Deliberately only depends on primitive/stable values.
+    // framesRef and fetchedWindowRef are refs so they don't trigger re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enabled, showBoxes, showTrackIds, sourceWidth, sourceHeight, fetchWindow]
+  );
+
+  // ── Register renderer once (and whenever it genuinely changes) ────────────
   useEffect(() => {
-    onRendererReady(renderer);
-  }, [renderer, onRendererReady]);
+    onRendererReady(enabled ? renderer : null);
+  }, [renderer, enabled, onRendererReady]);
 
-  if (error) {
-    return null; // Silent — don't block video playback.
-  }
+  // ── When overlay is disabled, clear the canvas ────────────────────────────
+  useEffect(() => {
+    if (!enabled) {
+      onRendererReady(null);
+    }
+  }, [enabled, onRendererReady]);
 
-  return null; // This component is invisible; it only provides the renderer.
+  return null;
 }
