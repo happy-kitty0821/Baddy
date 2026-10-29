@@ -123,3 +123,30 @@ def mark_run_failed(
     run.error_message = error_message
     run.completed_at = datetime.now(timezone.utc)
     db.commit()
+
+
+def cancel_run(db: Session, run: AnalysisRun) -> AnalysisRun:
+    """
+    Cancel a run that is in an active state (queued, ingesting, processing).
+
+    Sets status to CANCELLED, clears the current stage, and records the
+    completion time.  The original video and any partial results are NOT
+    deleted — the user can re-run by creating a new analysis run or
+    by retrying.
+
+    If the run is already in a terminal state (completed, failed, cancelled),
+    this is a no-op.
+    """
+    if run.status in (
+        AnalysisStatus.QUEUED.value,
+        AnalysisStatus.INGESTING.value,
+        AnalysisStatus.PROCESSING.value,
+    ):
+        run.status = AnalysisStatus.CANCELLED.value
+        run.current_stage = None
+        run.completed_at = datetime.now(timezone.utc)
+        run.error_code = "CANCELLED_BY_USER"
+        run.error_message = "Processing cancelled by user."
+        db.commit()
+        db.refresh(run)
+    return run

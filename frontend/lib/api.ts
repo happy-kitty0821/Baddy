@@ -175,6 +175,12 @@ async function retryAnalysis(runId: string): Promise<AnalysisRunRead> {
   });
 }
 
+async function cancelAnalysis(runId: string): Promise<AnalysisRunRead> {
+  return apiFetch<AnalysisRunRead>(`/analyses/${runId}/cancel`, {
+    method: "POST",
+  });
+}
+
 // ── Assets ────────────────────────────────────────────────────────────────────
 
 function getAssetStreamUrl(assetId: string): string {
@@ -264,6 +270,7 @@ const apiClient = {
   getLatestAnalysis,
   startAnalysis,
   retryAnalysis,
+  cancelAnalysis,
   // assets
   getAssetStreamUrl,
   getAssetStreamUrlWithToken,

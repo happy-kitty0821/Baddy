@@ -37,6 +37,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [error, setError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   // Phase 2 state.
   const [showSkeleton, setShowSkeleton] = useState(true);
@@ -46,11 +47,11 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   // Store the overlay renderer in a ref (not state) to avoid React treating
   // the function as an updater when passed to useState.
   const overlayRendererRef = useRef<((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null>(null);
-  const [, forceRender] = useState(0);
+  const [renderTick, setRenderTick] = useState(0);
   const setOverlayRenderer = useCallback(
     (fn: (ctx: CanvasRenderingContext2D, currentTime: number) => void) => {
       overlayRendererRef.current = fn;
-      forceRender((n) => n + 1); // trigger re-render so VideoPlayer gets the new renderer
+      setRenderTick((n) => n + 1); // trigger re-render so VideoPlayer gets the new renderer
     },
     []
   );
@@ -100,6 +101,19 @@ export default function MatchDetail({ id }: MatchDetailProps) {
       setError((e as Error).message);
     } finally {
       setRetrying(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!latestRun) return;
+    setCancelling(true);
+    try {
+      const run = await apiClient.cancelAnalysis(latestRun.id);
+      setLatestRun(run);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -234,25 +248,40 @@ export default function MatchDetail({ id }: MatchDetailProps) {
 
       {/* Active run progress */}
       {runIsActive && (
-        <ProcessingStatus
-          runId={latestRun!.id}
-          onComplete={handleRunComplete}
-          onError={handleRunError}
-        />
+        <div className="space-y-2">
+          <ProcessingStatus
+            runId={latestRun!.id}
+            onComplete={handleRunComplete}
+            onError={handleRunError}
+          />
+          <button
+            onClick={handleCancel}
+            disabled={cancelling}
+            className="rounded border border-red-700 px-3 py-1 text-xs text-red-400 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
+          >
+            {cancelling ? "Cancelling…" : "Cancel processing"}
+          </button>
+        </div>
       )}
 
-      {/* Failed run */}
-      {latestRun?.status === "failed" && (
-        <div className="rounded-lg border border-red-700 bg-red-900/20 p-4 space-y-2">
-          <p className="text-sm font-medium text-red-300">
-            Processing failed{latestRun.error_code ? ` (${latestRun.error_code})` : ""}
+      {/* Failed or cancelled run */}
+      {(latestRun?.status === "failed" || latestRun?.status === "cancelled") && (
+        <div className={`rounded-lg border p-4 space-y-2 ${
+          latestRun.status === "failed" ? "border-red-700 bg-red-900/20" : "border-gray-600 bg-gray-800/40"
+        }`}>
+          <p className={`text-sm font-medium ${
+            latestRun.status === "failed" ? "text-red-300" : "text-gray-300"
+          }`}>
+            {latestRun.status === "failed"
+              ? `Processing failed${latestRun.error_code ? ` (${latestRun.error_code})` : ""}`
+              : "Processing cancelled"}
           </p>
-          {latestRun.error_message && (
+          {latestRun.error_message && latestRun.status === "failed" && (
             <p className="text-xs text-red-400">{latestRun.error_message}</p>
           )}
           <button onClick={handleRetry} disabled={retrying}
-            className="mt-2 rounded border border-red-600 px-3 py-1 text-xs text-red-300 hover:bg-red-900/40 disabled:opacity-50 transition-colors">
-            {retrying ? "Retrying…" : "Retry processing"}
+            className="mt-2 rounded border border-gray-600 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50 transition-colors">
+            {retrying ? "Retrying…" : "Re-run processing"}
           </button>
         </div>
       )}
