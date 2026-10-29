@@ -1,132 +1,227 @@
 /**
- * PlayerPanel — shows detected player tracks and lets the user mark
- * which track represents them ("Me").
+ * PlayerPanel — court-half player identity assignment.
  *
- * Calls PATCH /api/analyses/{run_id}/tracks/{track_id} to update
- * is_selected_player. Only one track can be "Me" at a time.
+ * Instead of showing a list of 60+ ByteTrack IDs, this component:
+ *   1. Calls POST /api/analyses/{run_id}/assign-court-halves which
+ *      automatically groups all tracks into Near-End and Far-End using
+ *      median vertical bounding-box position.
+ *   2. Shows two clear buttons: "I am the Near-End player" and
+ *      "I am the Far-End player".
+ *   3. Marks the selected track as is_selected_player=true.
+ *
+ * Near End  = closer to the camera (larger in frame, bottom of overhead view)
+ * Far End   = further from camera (smaller in frame, top of overhead view)
+ *
+ * For side-on footage, the axis switches to X (left vs right half).
  */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { PlayerTrack } from "@/types/api";
+import type { CourtHalfAssignment, PlayerTrack } from "@/types/api";
 import apiClient from "@/lib/api";
 
 interface PlayerPanelProps {
   runId: string;
+  sourceHeight?: number;
   onTracksUpdated?: () => void;
 }
 
-export default function PlayerPanel({ runId, onTracksUpdated }: PlayerPanelProps) {
-  const [tracks, setTracks] = useState<PlayerTrack[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function PlayerPanel({
+  runId,
+  sourceHeight = 1080,
+  onTracksUpdated,
+}: PlayerPanelProps) {
+  const [assignment, setAssignment] = useState<CourtHalfAssignment | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [selecting, setSelecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
 
-  const fetchTracks = useCallback(() => {
-    apiClient
-      .getTracks(runId)
-      .then(setTracks)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [runId]);
-
-  useEffect(() => {
-    fetchTracks();
-  }, [fetchTracks]);
-
-  const handleSelectMe = async (trackId: string) => {
-    setUpdating(true);
+  const runAutoAssign = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      // Set the selected track to true and all others to false.
-      for (const t of tracks) {
-        if (t.id === trackId) {
-          await apiClient.updatePlayerIdentity(runId, t.id, {
-            is_selected_player: true,
-          });
-        } else if (t.is_selected_player) {
-          await apiClient.updatePlayerIdentity(runId, t.id, {
-            is_selected_player: false,
-          });
-        }
+      const result = await apiClient.assignCourtHalves(runId, sourceHeight);
+      setAssignment(result);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [runId, sourceHeight]);
+
+  // Auto-assign on mount.
+  useEffect(() => {
+    runAutoAssign();
+  }, [runAutoAssign]);
+
+  const handleSelectMe = async (track: PlayerTrack | null | undefined) => {
+    if (!track || !assignment) return;
+    setSelecting(true);
+    setError(null);
+    try {
+      // Mark selected track as "Me".
+      await apiClient.updatePlayerIdentity(runId, track.id, {
+        is_selected_player: true,
+      });
+      // Mark the other canonical track as not-me.
+      const other =
+        assignment.near_end?.id === track.id
+          ? assignment.far_end
+          : assignment.near_end;
+      if (other && other.is_selected_player) {
+        await apiClient.updatePlayerIdentity(runId, other.id, {
+          is_selected_player: false,
+        });
       }
-      fetchTracks();
+      // Refresh the assignment.
+      await runAutoAssign();
       onTracksUpdated?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setUpdating(false);
+      setSelecting(false);
     }
   };
 
   if (loading) {
     return (
       <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
-        <p className="text-sm text-gray-500 animate-pulse">Loading player tracks…</p>
+        <p className="text-sm text-gray-500 animate-pulse">Identifying players…</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
-        <p className="text-sm text-red-300">Error: {error}</p>
+      <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 space-y-2">
+        <p className="text-sm text-red-300">Could not identify players: {error}</p>
+        <button
+          onClick={runAutoAssign}
+          className="text-xs text-gray-400 underline hover:text-gray-200"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
-  if (tracks.length === 0) {
+  if (!assignment || (!assignment.near_end && !assignment.far_end)) {
     return (
       <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
-        <p className="text-sm text-gray-500">No player tracks detected yet.</p>
+        <p className="text-sm text-gray-500">No player tracks found.</p>
         <p className="text-xs text-gray-600 mt-1">
-          Run player analysis to detect and track players.
+          Run player analysis first.
         </p>
       </div>
     );
   }
 
+  const axisLabel = assignment.axis === "x" ? "Left / Right" : "Near / Far";
+  const nearLabel = assignment.axis === "x" ? "Left Side" : "Near End";
+  const farLabel = assignment.axis === "x" ? "Right Side" : "Far End";
+  const nearSub = assignment.axis === "x"
+    ? "Left half of frame"
+    : "Closer to camera (larger in frame)";
+  const farSub = assignment.axis === "x"
+    ? "Right half of frame"
+    : "Further from camera (smaller in frame)";
+
   return (
-    <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 space-y-3">
-      <h3 className="text-sm font-semibold text-gray-300">Player Identity</h3>
-      <p className="text-xs text-gray-500">
-        Select which tracked player is you. This assignment is used for
-        future coaching analysis.
-      </p>
-      <div className="space-y-2">
-        {tracks.map((t) => (
-          <div
-            key={t.id}
-            className={`flex items-center justify-between rounded-md border px-3 py-2 ${
-              t.is_selected_player
-                ? "border-green-600 bg-green-900/20"
-                : "border-gray-700 bg-gray-800"
-            }`}
-          >
-            <div>
-              <span className="text-sm text-gray-200">{t.track_label}</span>
-              {t.is_selected_player && (
-                <span className="ml-2 text-xs text-green-400 font-medium">✓ Me</span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {t.identity_confidence != null && (
-                <span className="text-xs text-gray-500">
-                  conf: {(t.identity_confidence * 100).toFixed(0)}%
-                </span>
-              )}
-              {!t.is_selected_player && (
-                <button
-                  onClick={() => handleSelectMe(t.id)}
-                  disabled={updating}
-                  className="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50 transition-colors"
-                >
-                  Mark as Me
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
+    <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-300">Which player are you?</h3>
+        <p className="text-xs text-gray-500 mt-1">
+          Players were automatically assigned by court position ({axisLabel}).
+          Select the half you played from.
+        </p>
+        {assignment.ambiguous && (
+          <p className="text-xs text-yellow-500 mt-1">
+            ⚠ Could not clearly identify two players — assignment may be inaccurate.
+          </p>
+        )}
       </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        {/* Near End */}
+        <CourtHalfButton
+          label={nearLabel}
+          sublabel={nearSub}
+          track={assignment.near_end}
+          isMe={assignment.near_end?.is_selected_player ?? false}
+          disabled={selecting}
+          onSelect={() => handleSelectMe(assignment.near_end)}
+        />
+
+        {/* Far End */}
+        <CourtHalfButton
+          label={farLabel}
+          sublabel={farSub}
+          track={assignment.far_end}
+          isMe={assignment.far_end?.is_selected_player ?? false}
+          disabled={selecting}
+          onSelect={() => handleSelectMe(assignment.far_end)}
+        />
+      </div>
+
+      <button
+        onClick={runAutoAssign}
+        disabled={loading || assigning}
+        className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+      >
+        Re-detect players
+      </button>
     </div>
+  );
+}
+
+interface CourtHalfButtonProps {
+  label: string;
+  sublabel: string;
+  track: PlayerTrack | null | undefined;
+  isMe: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+}
+
+function CourtHalfButton({
+  label,
+  sublabel,
+  track,
+  isMe,
+  disabled,
+  onSelect,
+}: CourtHalfButtonProps) {
+  if (!track) {
+    return (
+      <div className="rounded-lg border border-gray-700 bg-gray-800 p-4 text-center opacity-50">
+        <p className="text-sm text-gray-400">{label}</p>
+        <p className="text-xs text-gray-600 mt-1">Not detected</p>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={onSelect}
+      disabled={disabled || isMe}
+      className={`rounded-lg border p-4 text-center transition-colors w-full ${
+        isMe
+          ? "border-green-600 bg-green-900/30 cursor-default"
+          : "border-gray-600 bg-gray-800 hover:border-green-700 hover:bg-gray-700"
+      } disabled:opacity-60`}
+      aria-pressed={isMe}
+    >
+      <div className="text-base font-semibold text-white">
+        {label}
+        {isMe && <span className="ml-2 text-green-400">✓</span>}
+      </div>
+      <div className="text-xs text-gray-400 mt-1">{sublabel}</div>
+      {isMe ? (
+        <div className="text-xs text-green-400 mt-2 font-medium">This is me</div>
+      ) : (
+        <div className="text-xs text-gray-500 mt-2">Tap to select</div>
+      )}
+    </button>
   );
 }

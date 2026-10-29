@@ -14,6 +14,7 @@
 import type {
   AnalysisRunRead,
   AssetRead,
+  CourtHalfAssignment,
   MatchCreate,
   MatchListResponse,
   MatchRead,
@@ -223,6 +224,16 @@ async function updatePlayerIdentity(
   });
 }
 
+async function assignCourtHalves(
+  runId: string,
+  sourceHeight: number = 1080
+): Promise<CourtHalfAssignment> {
+  return apiFetch<CourtHalfAssignment>(
+    `/analyses/${runId}/assign-court-halves?source_height=${sourceHeight}`,
+    { method: "POST" }
+  );
+}
+
 function getAssetStreamUrlWithToken(assetId: string): string {
   // For use in <video src="..."> where we can't set headers.
   // The backend must accept the token as a query param too (Phase 2).
@@ -261,6 +272,7 @@ const apiClient = {
   getTracks,
   getPoses,
   updatePlayerIdentity,
+  assignCourtHalves,
 };
 
 export default apiClient;

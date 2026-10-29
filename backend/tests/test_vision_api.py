@@ -189,8 +189,8 @@ def test_list_tracks(client, auth_headers, completed_run, db_session):
     run_id = completed_run
     track1 = _inject_track(db_session, run_id, track_id=1, label="player_1")
     track2 = _inject_track(db_session, run_id, track_id=2, label="player_2")
-    # Inject enough pose frames so the tracks pass the minimum-frame filter.
-    for ts in range(0, 5000, 1000):
+    # Inject enough pose frames so the tracks pass the 50-frame minimum filter.
+    for ts in range(0, 50000, 1000):
         _inject_pose(db_session, run_id, track1, ts, ts // 100)
         _inject_pose(db_session, run_id, track2, ts, ts // 100)
 
@@ -198,10 +198,10 @@ def test_list_tracks(client, auth_headers, completed_run, db_session):
     assert r.status_code == 200, r.text
     body = r.json()
     assert len(body) == 2
-    # Ordered by track_id ascending.
-    assert body[0]["track_id"] == 1
-    assert body[0]["track_label"] == "player_1"
-    assert body[1]["track_id"] == 2
+    # Both tracks have the same frame count, so order may vary — just check both are present.
+    track_ids = {body[0]["track_id"], body[1]["track_id"]}
+    assert track_ids == {1, 2}
+    assert body[0]["is_selected_player"] is False
     assert body[1]["is_selected_player"] is False
 
 

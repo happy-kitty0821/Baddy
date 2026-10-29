@@ -118,3 +118,11 @@ class CorrectionRead(BaseModel):
             except Exception:
                 pass
         return {}
+
+
+class CourtHalfAssignment(BaseModel):
+    """Result of the automatic court-half player assignment."""
+    near_end: PlayerTrackRead | None = None
+    far_end: PlayerTrackRead | None = None
+    axis: str = "y"
+    ambiguous: bool = False

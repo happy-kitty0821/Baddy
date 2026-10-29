@@ -159,3 +159,10 @@ export interface PlayerIdentityUpdate {
   is_selected_player?: boolean;
   identity_note?: string | null;
 }
+
+export interface CourtHalfAssignment {
+  near_end: PlayerTrack | null;
+  far_end: PlayerTrack | null;
+  axis: "y" | "x";
+  ambiguous: boolean;
+}

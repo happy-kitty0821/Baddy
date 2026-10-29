@@ -1,0 +1,6 @@
+EXIT=0
+........................................................................ [ 93%]
+.....                                                                    [100%]
+- generated xml file: c:\Users\User\Documents\Badminton AI Analysis\backend\fixes4_result.xml -
+
+---ERR---

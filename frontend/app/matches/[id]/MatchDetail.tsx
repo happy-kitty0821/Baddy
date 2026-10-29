@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AnalysisRunRead, MatchRead } from "@/types/api";
 import apiClient from "@/lib/api";
@@ -43,9 +43,17 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [showBoxes, setShowBoxes] = useState(true);
   const [showTrackIds, setShowTrackIds] = useState(true);
   const [visionStarted, setVisionStarted] = useState(false);
-  const [overlayRenderer, setOverlayRenderer] = useState<
-    ((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null
-  >(null);
+  // Store the overlay renderer in a ref (not state) to avoid React treating
+  // the function as an updater when passed to useState.
+  const overlayRendererRef = useRef<((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null>(null);
+  const [, forceRender] = useState(0);
+  const setOverlayRenderer = useCallback(
+    (fn: (ctx: CanvasRenderingContext2D, currentTime: number) => void) => {
+      overlayRendererRef.current = fn;
+      forceRender((n) => n + 1); // trigger re-render so VideoPlayer gets the new renderer
+    },
+    []
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +190,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
         <div className="space-y-2">
           <VideoPlayer
             assetId={match.source_asset_id}
-            renderOverlay={overlayRenderer ?? undefined}
+            renderOverlay={overlayRendererRef.current ?? undefined}
           />
           {/* Phase 2 overlay controls */}
           {showSkeleton && latestRun && (
@@ -269,7 +277,10 @@ export default function MatchDetail({ id }: MatchDetailProps) {
 
       {/* Phase 2: Player identity panel */}
       {hasVisionResults && latestRun && (
-        <PlayerPanel runId={latestRun.id} />
+        <PlayerPanel
+          runId={latestRun.id}
+          sourceHeight={match.height || 1080}
+        />
       )}
 
       {/* Match metadata */}

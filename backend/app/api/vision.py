@@ -23,6 +23,7 @@ from app.schemas.analysis import AnalysisRunRead
 from app.schemas.vision import (
     CorrectionCreate,
     CorrectionRead,
+    CourtHalfAssignment,
     PlayerIdentityUpdate,
     PlayerTrackRead,
     PoseFrameListResponse,
@@ -31,6 +32,7 @@ from app.schemas.vision import (
 )
 from app.services.job_service import get_run
 from app.services.vision_service import (
+    assign_court_halves,
     dispatch_vision,
     get_track,
     get_tracks,
@@ -99,6 +101,32 @@ def list_tracks(
 ) -> list[PlayerTrackRead]:
     _get_run_or_404(db, run_id)
     return [PlayerTrackRead.model_validate(t) for t in get_tracks(db, run_id)]
+
+
+@router.post("/{run_id}/assign-court-halves", response_model=CourtHalfAssignment)
+def auto_assign_court_halves(
+    run_id: str,
+    db: DBSession,
+    current_user: CurrentUser,
+    source_height: int = 1080,
+) -> CourtHalfAssignment:
+    """
+    Automatically assign Near-End and Far-End court positions to player tracks.
+
+    Uses the median vertical bounding-box centre across all pose frames to
+    determine which players are in which half of the court.  Falls back to
+    horizontal split if footage is side-on.
+
+    Pass source_height as a query parameter (defaults to 1080).
+    """
+    _get_run_or_404(db, run_id)
+    result = assign_court_halves(db, run_id, source_height=source_height)
+    return CourtHalfAssignment(
+        near_end=PlayerTrackRead.model_validate(result["near_end"]) if result["near_end"] else None,
+        far_end=PlayerTrackRead.model_validate(result["far_end"]) if result["far_end"] else None,
+        axis=result["axis"],
+        ambiguous=result["ambiguous"],
+    )
 
 
 @router.get("/{run_id}/poses", response_model=PoseFrameListResponse)
