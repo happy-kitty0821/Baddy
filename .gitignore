@@ -34,7 +34,10 @@ out/
 *.tsbuildinfo
 
 # ── Local runtime data (never commit) ───────────────────────────────────
-storage/
+# Anchor storage/ to the repo root — only ignores the top-level storage/
+# directory that holds uploaded videos and artifacts, NOT code packages
+# like backend/app/storage/ which are source files that must be committed.
+/storage/
 data/
 *.db
 *.db-journal
