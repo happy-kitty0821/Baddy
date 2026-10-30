@@ -23,6 +23,7 @@ import apiClient from "@/lib/api";
 interface PlayerPanelProps {
   runId: string;
   sourceHeight?: number;
+  sourceWidth?: number;
   onSideSelected?: (side: "near" | "far" | null) => void;
   onTracksUpdated?: () => void;
 }
@@ -30,6 +31,7 @@ interface PlayerPanelProps {
 export default function PlayerPanel({
   runId,
   sourceHeight = 1080,
+  sourceWidth = 0,
   onSideSelected,
   onTracksUpdated,
 }: PlayerPanelProps) {
@@ -43,7 +45,7 @@ export default function PlayerPanel({
     setLoading(true);
     setError(null);
     try {
-      const result = await apiClient.assignCourtHalves(runId, sourceHeight);
+      const result = await apiClient.assignCourtHalves(runId, sourceHeight, sourceWidth);
       setAssignment(result);
     } catch (e) {
       setError((e as Error).message);
@@ -123,13 +125,15 @@ export default function PlayerPanel({
   }
 
   const axisLabel = assignment.axis === "x" ? "Left / Right" : "Near / Far";
-  const nearLabel = assignment.axis === "x" ? "Left Side" : "Near End";
-  const farLabel = assignment.axis === "x" ? "Right Side" : "Far End";
+  // Backend assigns: near_end = bottom half (landscape) or right_side (portrait)
+  // far_end = top half (landscape) or left_side (portrait)
+  const nearLabel = assignment.axis === "x" ? "Right Side" : "Near End";
+  const farLabel = assignment.axis === "x" ? "Left Side" : "Far End";
   const nearSub = assignment.axis === "x"
-    ? "Left half of frame"
+    ? "Right half of frame"
     : "Closer to camera (larger in frame)";
   const farSub = assignment.axis === "x"
-    ? "Right half of frame"
+    ? "Left half of frame"
     : "Further from camera (smaller in frame)";
 
   return (

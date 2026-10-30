@@ -319,6 +319,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
         <PlayerPanel
           runId={latestRun.id}
           sourceHeight={match.height || 1080}
+          sourceWidth={match.width || 0}
           onSideSelected={setSelectedCourtSide}
         />
       )}

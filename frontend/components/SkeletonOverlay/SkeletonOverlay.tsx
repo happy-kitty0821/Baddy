@@ -52,6 +52,7 @@ interface SkeletonOverlayProps {
   showTrackIds: boolean;
   /** "near" or "far" to show only one court half; null = both. */
   courtSide: "near" | "far" | null;
+  /** Source video dimensions in pixels (from match metadata). */
   sourceWidth: number;
   sourceHeight: number;
   onRendererReady: (
@@ -181,8 +182,55 @@ export default function SkeletonOverlay({
       const canvas = ctx.canvas;
       if (canvas.width === 0 || canvas.height === 0) return;
 
-      const scaleX = canvas.width / sourceWidth;
-      const scaleY = canvas.height / sourceHeight;
+      // ── Letterbox-aware coordinate mapping ──────────────────────────────
+      // The video element uses object-fit: contain inside an aspect-video
+      // (16:9) container.  For non-16:9 source videos (e.g. 608×1080 = 9:16)
+      // the browser adds black bars.  Keypoints are in source pixels, so we
+      // must map them onto the actual video content rect, not the full canvas.
+      //
+      // Rendered video rect inside canvas:
+      //   canvasAR = canvas.width / canvas.height   (container aspect ratio)
+      //   sourceAR = sourceWidth / sourceHeight       (source aspect ratio)
+      //
+      //   if sourceAR < canvasAR  →  pillarbox (black bars left/right)
+      //     renderedH = canvas.height
+      //     renderedW = canvas.height * sourceAR
+      //     offsetX   = (canvas.width - renderedW) / 2
+      //     offsetY   = 0
+      //
+      //   if sourceAR > canvasAR  →  letterbox (black bars top/bottom)
+      //     renderedW = canvas.width
+      //     renderedH = canvas.width / sourceAR
+      //     offsetX   = 0
+      //     offsetY   = (canvas.height - renderedH) / 2
+      const canvasAR = canvas.width / canvas.height;
+      const sourceAR = sourceWidth / sourceHeight;
+
+      let renderedW: number;
+      let renderedH: number;
+      let offsetX: number;
+      let offsetY: number;
+
+      if (sourceAR < canvasAR) {
+        // Pillarbox — black bars on left and right (e.g. portrait 9:16 in 16:9)
+        renderedH = canvas.height;
+        renderedW = canvas.height * sourceAR;
+        offsetX = (canvas.width - renderedW) / 2;
+        offsetY = 0;
+      } else {
+        // Letterbox — black bars on top and bottom (e.g. wide source in 16:9)
+        renderedW = canvas.width;
+        renderedH = canvas.width / sourceAR;
+        offsetX = 0;
+        offsetY = (canvas.height - renderedH) / 2;
+      }
+
+      const scaleX = renderedW / sourceWidth;
+      const scaleY = renderedH / sourceHeight;
+
+      // Helper: map a source-pixel point onto the canvas.
+      const mapX = (px: number) => px * scaleX + offsetX;
+      const mapY = (py: number) => py * scaleY + offsetY;
 
       for (const frame of nearest) {
         const kps = frame.keypoints;
@@ -191,8 +239,8 @@ export default function SkeletonOverlay({
         // ── Bounding box ──────────────────────────────────────────────────
         if (showBoxes && frame.bbox_x != null && frame.bbox_y != null &&
             frame.bbox_w != null && frame.bbox_h != null) {
-          const bx = frame.bbox_x * scaleX;
-          const by = frame.bbox_y * scaleY;
+          const bx = mapX(frame.bbox_x);
+          const by = mapY(frame.bbox_y);
           const bw = frame.bbox_w * scaleX;
           const bh = frame.bbox_h * scaleY;
           ctx.globalAlpha = 0.4;
@@ -219,8 +267,8 @@ export default function SkeletonOverlay({
           const confident = confA > CONFIDENCE_THRESHOLD && confB > CONFIDENCE_THRESHOLD;
 
           ctx.beginPath();
-          ctx.moveTo(ka[0] * scaleX, ka[1] * scaleY);
-          ctx.lineTo(kb[0] * scaleX, kb[1] * scaleY);
+          ctx.moveTo(mapX(ka[0]), mapY(ka[1]));
+          ctx.lineTo(mapX(kb[0]), mapY(kb[1]));
           ctx.strokeStyle = confident
             ? "rgba(0, 255, 80, 0.9)"
             : "rgba(0, 200, 60, 0.25)";
@@ -233,9 +281,9 @@ export default function SkeletonOverlay({
           const kp = kps[i];
           if (!kp) continue;
           const conf = kp[2] ?? 0;
-          if (conf < 0.15) continue; // skip very low confidence points entirely
-          const x = kp[0] * scaleX;
-          const y = kp[1] * scaleY;
+          if (conf < 0.15) continue;
+          const x = mapX(kp[0]);
+          const y = mapY(kp[1]);
           const r = conf > CONFIDENCE_THRESHOLD ? 4 : 2.5;
           ctx.beginPath();
           ctx.arc(x, y, r, 0, Math.PI * 2);

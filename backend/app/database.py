@@ -33,14 +33,28 @@ def _make_engine() -> Engine:
     if settings.is_sqlite:
         engine = create_engine(
             settings.database_url,
-            connect_args={"check_same_thread": False},
+            connect_args={
+                "check_same_thread": False,
+                # Wait up to 30 seconds when the DB is locked by another
+                # process (e.g. the Celery worker doing a batch commit).
+                # Without this, SQLite raises immediately on any lock contention.
+                "timeout": 30,
+            },
             pool_pre_ping=True,
         )
-        # Enable foreign-key constraints for every SQLite connection.
+
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_conn, _connection_record):  # type: ignore[no-untyped-def]
             cursor = dbapi_conn.cursor()
+            # Foreign key enforcement.
             cursor.execute("PRAGMA foreign_keys=ON")
+            # WAL mode: readers never block writers and writers never block
+            # readers.  This is the single most effective fix for the
+            # "database is locked" error when multiple processes (API + worker)
+            # share the same SQLite file.
+            cursor.execute("PRAGMA journal_mode=WAL")
+            # Busy timeout as a belt-and-suspenders fallback (30 seconds).
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
 
         return engine

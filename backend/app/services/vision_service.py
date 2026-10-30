@@ -58,27 +58,25 @@ def get_tracks(db: Session, run_id: str, min_frames: int = _MIN_TRACK_FRAMES) ->
     return [r[0] for r in rows]
 
 
-def assign_court_halves(db: Session, run_id: str, source_height: int) -> dict:
+def assign_court_halves(db: Session, run_id: str, source_height: int, source_width: int = 0) -> dict:
     """
     Automatically assign Near-End and Far-End court positions to player tracks.
 
+    Orientation detection:
+      - Landscape (width > height, typical overhead/back-corner footage):
+        Split on Y axis. Near End = bottom half (Y >= 50%), Far End = top half.
+      - Portrait (height > width, e.g. phone recording, YouTube Short 9:16):
+        Split on X axis. Near End = right half (X >= 50%), Far End = left half.
+        Labels become "Left Side" / "Right Side" in the UI.
+
     Algorithm:
-    1. For every qualifying track, compute the median Y position of
-       (bbox_y + bbox_h/2) — the vertical centre of the bounding box.
-    2. Tracks whose median centre is above the halfway line (Y < 50% of frame)
-       are "Far End" (far from the camera).
-    3. Tracks whose median centre is below the halfway line (Y >= 50%) are
-       "Near End" (close to the camera).
-    4. Pick the track with the most pose frames in each half as the canonical
-       player for that half.  Assign track_label accordingly.
-    5. Mark the Near-End canonical track as the "primary" player by default
-       (user can correct this).
+    1. Determine axis from source dimensions (Y for landscape, X for portrait).
+    2. For every qualifying track, compute the median centre on the chosen axis.
+    3. Partition tracks into two halves by the midpoint.
+    4. Pick the track with the most pose frames in each half as canonical.
+    5. Persist track_label and identity_note.
 
-    Handles dynamic footage / camera orientation:
-    - If variance along Y is too low (side-on camera), falls back to X-axis split.
-    - If only one half has tracks, all tracks are assigned to that half.
-
-    Returns a dict describing the assignment:
+    Returns a dict:
       { "near_end": PlayerTrack | None, "far_end": PlayerTrack | None,
         "axis": "y" | "x", "ambiguous": bool }
     """
@@ -86,39 +84,43 @@ def assign_court_halves(db: Session, run_id: str, source_height: int) -> dict:
     if not tracks:
         return {"near_end": None, "far_end": None, "axis": "y", "ambiguous": True}
 
-    # For each track compute: median bbox vertical centre and total frame count.
-    half_line = source_height / 2.0
+    # Choose axis from source dimensions.
+    # Portrait = height > width → side-on or vertical recording → split on X.
+    is_portrait = source_height > 0 and source_width > 0 and source_height > source_width
+    axis = "x" if is_portrait else "y"
 
-    track_medians: list[tuple[PlayerTrack, float, int]] = []
-    for track in tracks:
-        poses = (
-            db.query(PoseFrame.bbox_y, PoseFrame.bbox_h)
-            .filter(PoseFrame.player_track_id == track.id)
-            .filter(PoseFrame.bbox_y.isnot(None))
-            .order_by(PoseFrame.timestamp_ms)
-            .all()
-        )
-        if not poses:
-            continue
-        centres = [(row[0] + (row[1] or 0) / 2.0) for row in poses]
-        centres.sort()
-        median_y = centres[len(centres) // 2]
-        track_medians.append((track, median_y, len(poses)))
+    if axis == "y":
+        # Y-axis split: Near End = bottom half (Y >= source_height/2)
+        half = source_height / 2.0
 
-    if not track_medians:
-        return {"near_end": None, "far_end": None, "axis": "y", "ambiguous": True}
+        track_medians: list[tuple[PlayerTrack, float, int]] = []
+        for track in tracks:
+            poses = (
+                db.query(PoseFrame.bbox_y, PoseFrame.bbox_h)
+                .filter(PoseFrame.player_track_id == track.id)
+                .filter(PoseFrame.bbox_y.isnot(None))
+                .all()
+            )
+            if not poses:
+                continue
+            centres = sorted([(row[0] + (row[1] or 0) / 2.0) for row in poses])
+            median_y = centres[len(centres) // 2]
+            track_medians.append((track, median_y, len(poses)))
 
-    # Check variance to detect side-on footage.
-    all_medians = [m[1] for m in track_medians]
-    y_spread = max(all_medians) - min(all_medians)
-    axis = "y"
+        # If Y variance is very low, fall back to X (probably a side-on view
+        # that was miscategorised as landscape).
+        if track_medians:
+            y_spread = max(m[1] for m in track_medians) - min(m[1] for m in track_medians)
+            if y_spread < source_height * 0.15:
+                axis = "x"
+    
+    if axis == "x":
+        # X-axis split: Near End = right half (X >= source_width/2)
+        # For portrait footage the "near end" is conventionally the player
+        # who appears on the right (or bottom of a rotated view).
+        effective_width = source_width or source_height  # fallback if width=0
+        half = effective_width / 2.0
 
-    if y_spread < source_height * 0.15:
-        # Very low Y-spread — probably a side-on view.  Use X instead.
-        axis = "x"
-        # Re-compute using X-axis: bbox_x + bbox_w/2
-        source_width_approx = source_height * 16 // 9  # estimate from AR
-        half_line_x = source_width_approx / 2.0
         track_medians = []
         for track in tracks:
             poses = (
@@ -129,29 +131,40 @@ def assign_court_halves(db: Session, run_id: str, source_height: int) -> dict:
             )
             if not poses:
                 continue
-            centres = [(row[0] + (row[1] or 0) / 2.0) for row in poses]
-            centres.sort()
+            centres = sorted([(row[0] + (row[1] or 0) / 2.0) for row in poses])
             median_x = centres[len(centres) // 2]
             track_medians.append((track, median_x, len(poses)))
-        half_line = half_line_x
 
-    # Partition tracks into two halves.
-    near_candidates = [(t, c, n) for t, c, n in track_medians if c >= half_line]
-    far_candidates = [(t, c, n) for t, c, n in track_medians if c < half_line]
+    if not track_medians:
+        return {"near_end": None, "far_end": None, "axis": axis, "ambiguous": True}
 
-    # Canonical player for each half: most pose frames.
+    # Partition into two halves and pick canonical track (most pose frames).
+    near_candidates = [(t, c, n) for t, c, n in track_medians if c >= half]
+    far_candidates  = [(t, c, n) for t, c, n in track_medians if c < half]
+
     near_track = max(near_candidates, key=lambda x: x[2])[0] if near_candidates else None
-    far_track = max(far_candidates, key=lambda x: x[2])[0] if far_candidates else None
+    far_track  = max(far_candidates,  key=lambda x: x[2])[0] if far_candidates  else None
 
     ambiguous = (near_track is None or far_track is None)
 
-    # Persist the assignment.
+    # Persist labels and notes.
+    if axis == "x":
+        near_label = "right_side"
+        far_label  = "left_side"
+        near_note  = "Auto-assigned: right side of frame"
+        far_note   = "Auto-assigned: left side of frame"
+    else:
+        near_label = "near_end"
+        far_label  = "far_end"
+        near_note  = "Auto-assigned: near end of court (closer to camera)"
+        far_note   = "Auto-assigned: far end of court (further from camera)"
+
     if near_track:
-        near_track.track_label = "near_end"
-        near_track.identity_note = "Auto-assigned: near end of court (closer to camera)"
+        near_track.track_label = near_label
+        near_track.identity_note = near_note
     if far_track:
-        far_track.track_label = "far_end"
-        far_track.identity_note = "Auto-assigned: far end of court (further from camera)"
+        far_track.track_label = far_label
+        far_track.identity_note = far_note
     db.commit()
 
     return {

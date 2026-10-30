@@ -196,24 +196,40 @@ def _extract_video_metadata(path: Path) -> dict:
         "-show_format",
         str(path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
     if result.returncode != 0:
         raise RuntimeError(
             f"ffprobe failed (exit {result.returncode}): {result.stderr[:500]}"
         )
 
     if not result.stdout or not result.stdout.strip():
-        raise RuntimeError(
-            f"ffprobe returned empty output (exit {result.returncode}). "
-            "The file may be corrupt or in an unsupported format."
-        )
+        # Fallback: retry in bytes mode and decode manually.
+        # This handles edge cases where the Windows code-page conversion
+        # silently drops output even with explicit utf-8 encoding.
+        r2 = subprocess.run(cmd, capture_output=True, timeout=60)
+        if r2.stdout:
+            result_stdout = r2.stdout.decode("utf-8", errors="replace")
+        else:
+            raise RuntimeError(
+                f"ffprobe returned empty output (exit {result.returncode}). "
+                f"stderr: {result.stderr[:300]!r}"
+            )
+    else:
+        result_stdout = result.stdout
 
     try:
-        data = json.loads(result.stdout)
+        data = json.loads(result_stdout)
     except Exception as exc:
         raise RuntimeError(
             f"ffprobe output could not be parsed as JSON: {exc!r}. "
-            f"stdout (first 200): {result.stdout[:200]!r}"
+            f"stdout (first 200): {result_stdout[:200]!r}"
         ) from exc
     video_stream = next(
         (s for s in data.get("streams", []) if s.get("codec_type") == "video"),

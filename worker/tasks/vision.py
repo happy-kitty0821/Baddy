@@ -117,20 +117,42 @@ def run_vision_sync(
     if storage is None:
         storage = LocalFileStorage()
 
+    # Track whether we reached a terminal state — used in the finally block to
+    # detect orphaned runs (task exited without completing or failing).
+    _reached_terminal = False
+
     try:
         run = db.get(AnalysisRun, run_id)
         if not run:
             logger.error("Vision: run %s not found in database.", run_id)
+            _reached_terminal = True  # nothing to fix up
             return
 
-        # Idempotency: if already completed, skip.
+        # Idempotency: if already completed AND has pose frames, skip.
+        # A run with status=completed but no pose frames completed ingestion
+        # only — vision still needs to run.
         if run.status == AnalysisStatus.COMPLETED.value:
-            logger.info("Vision: run %s already completed, skipping.", run_id)
+            from app.models.pose_frame import PoseFrame  # noqa: PLC0415
+            has_poses = db.query(PoseFrame).filter(
+                PoseFrame.analysis_run_id == run_id
+            ).first() is not None
+            if has_poses:
+                logger.info("Vision: run %s already has pose data, skipping.", run_id)
+                _reached_terminal = True
+                return
+            # No pose frames — completed ingestion only, proceed with vision.
+            logger.info("Vision: run %s completed ingestion but has no pose data, running vision.", run_id)
+
+        # If already cancelled, skip.
+        if run.status == AnalysisStatus.CANCELLED.value:
+            logger.info("Vision: run %s is cancelled, skipping.", run_id)
+            _reached_terminal = True
             return
 
         match = db.get(Match, match_id)
         if not match:
             mark_run_failed(db, run, "MATCH_NOT_FOUND", f"Match {match_id} not found.")
+            _reached_terminal = True
             return
 
         mark_vision_started(db, run, VisionStage.LOAD_VIDEO.value)
@@ -141,10 +163,12 @@ def run_vision_sync(
         asset = get_source_asset(db, match_id)
         if not asset:
             mark_run_failed(db, run, "NO_SOURCE_ASSET", "No source video asset found.")
+            _reached_terminal = True
             return
         if not storage.exists(asset.storage_key):
             mark_run_failed(db, run, "FILE_NOT_FOUND",
                             f"Source file missing: {asset.storage_key}")
+            _reached_terminal = True
             return
 
         video_path = storage.resolve_path(asset.storage_key)
@@ -203,6 +227,7 @@ def run_vision_sync(
             adapter.load(device)
         except Exception as exc:
             mark_run_failed(db, run, "MODEL_LOAD_ERROR", str(exc)[:500])
+            _reached_terminal = True
             return
 
         update_run_progress(db, run, 10, VisionStage.DETECT_PLAYERS.value)
@@ -224,6 +249,26 @@ def run_vision_sync(
             ):
                 frames_processed += 1
                 total_frames = frame_index  # track the last frame index
+
+                # ── Cancellation check every 50 frames ─────────────────────
+                # Re-read the run status from the DB.  If the user pressed
+                # "Cancel processing", the API marks it CANCELLED; the worker
+                # must notice and stop so it doesn't overwrite the status.
+                if frames_processed % 50 == 0:
+                    db.expire(run)          # flush SQLAlchemy's identity map
+                    db.refresh(run)         # re-read from DB
+                    if run.status == AnalysisStatus.CANCELLED.value:
+                        logger.info(
+                            "Vision cancelled by user: run=%s after %d frames",
+                            run_id, frames_processed,
+                        )
+                        try:
+                            adapter.unload()
+                        except Exception:
+                            pass
+                        db.commit()
+                        _reached_terminal = True
+                        return
 
                 # Compute timestamp from frame index and source fps.
                 timestamp_ms = int((frame_index / source_fps) * 1000)
@@ -275,8 +320,10 @@ def run_vision_sync(
                     update_run_progress(db, run, min(pct, 80),
                                         VisionStage.TRACK_AND_POSE.value)
 
-                # Batch commit every 100 frames to avoid huge transactions.
-                if frames_processed % 100 == 0:
+                # Batch commit every 10 frames to keep write transactions short.
+                # SQLite only allows one writer at a time; committing frequently
+                # releases the lock so the API can write between batches.
+                if frames_processed % 10 == 0:
                     db.commit()
                     logger.info("Processed %d frames (last_idx=%d, ts=%dms)",
                                 frames_processed, frame_index, timestamp_ms)
@@ -284,6 +331,7 @@ def run_vision_sync(
         except Exception as exc:
             logger.exception("Vision inference failed: run=%s", run_id)
             mark_run_failed(db, run, "VISION_ERROR", str(exc)[:500])
+            _reached_terminal = True
             try:
                 adapter.unload()
             except Exception:
@@ -314,6 +362,7 @@ def run_vision_sync(
         db.commit()
 
         mark_run_completed(db, run)
+        _reached_terminal = True
         logger.info("Vision finalized: run=%s match=%s", run_id, match_id)
 
         try:
@@ -323,6 +372,7 @@ def run_vision_sync(
 
     except Exception as exc:
         logger.exception("Vision failed unexpectedly: run=%s", run_id)
+        _reached_terminal = True
         try:
             run_obj = db.get(AnalysisRun, run_id)
             if run_obj:
@@ -332,6 +382,19 @@ def run_vision_sync(
             pass
         raise
     finally:
+        # Safety net: if the task exited without reaching a terminal state
+        # (completed, failed, cancelled) the run will be stuck in PROCESSING
+        # forever.  Mark it FAILED so the user can retry.
+        if not _reached_terminal:
+            try:
+                run_obj = db.get(AnalysisRun, run_id)
+                if run_obj and run_obj.status == AnalysisStatus.PROCESSING.value:
+                    from app.services.job_service import mark_run_failed as _fail
+                    _fail(db, run_obj, "ORPHANED_TASK",
+                          "Task exited without completing. Check worker logs and retry.")
+                    logger.warning("Orphaned run %s fixed up to FAILED in finally block", run_id)
+            except Exception:
+                pass
         db.close()
 
 

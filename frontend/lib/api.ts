@@ -233,10 +233,11 @@ async function updatePlayerIdentity(
 
 async function assignCourtHalves(
   runId: string,
-  sourceHeight: number = 1080
+  sourceHeight: number = 1080,
+  sourceWidth: number = 0
 ): Promise<CourtHalfAssignment> {
   return apiFetch<CourtHalfAssignment>(
-    `/analyses/${runId}/assign-court-halves?source_height=${sourceHeight}`,
+    `/analyses/${runId}/assign-court-halves?source_height=${sourceHeight}&source_width=${sourceWidth}`,
     { method: "POST" }
   );
 }

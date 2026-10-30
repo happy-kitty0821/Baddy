@@ -109,18 +109,17 @@ def auto_assign_court_halves(
     db: DBSession,
     current_user: CurrentUser,
     source_height: int = 1080,
+    source_width: int = 0,
 ) -> CourtHalfAssignment:
     """
     Automatically assign Near-End and Far-End court positions to player tracks.
 
-    Uses the median vertical bounding-box centre across all pose frames to
-    determine which players are in which half of the court.  Falls back to
-    horizontal split if footage is side-on.
-
-    Pass source_height as a query parameter (defaults to 1080).
+    For landscape footage (width > height): splits on Y axis (Near/Far).
+    For portrait footage (height > width, e.g. phone/Shorts): splits on X axis
+    (Left Side / Right Side).
     """
     _get_run_or_404(db, run_id)
-    result = assign_court_halves(db, run_id, source_height=source_height)
+    result = assign_court_halves(db, run_id, source_height=source_height, source_width=source_width)
     return CourtHalfAssignment(
         near_end=PlayerTrackRead.model_validate(result["near_end"]) if result["near_end"] else None,
         far_end=PlayerTrackRead.model_validate(result["far_end"]) if result["far_end"] else None,

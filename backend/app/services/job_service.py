@@ -129,10 +129,12 @@ def cancel_run(db: Session, run: AnalysisRun) -> AnalysisRun:
     """
     Cancel a run that is in an active state (queued, ingesting, processing).
 
-    Sets status to CANCELLED, clears the current stage, and records the
-    completion time.  The original video and any partial results are NOT
-    deleted — the user can re-run by creating a new analysis run or
-    by retrying.
+    Marks the run as CANCELLED in the database.  The worker checks this
+    status every 50 frames and stops gracefully when it sees CANCELLED.
+
+    Also attempts to revoke the Celery task via the broker so a queued task
+    that hasn't started yet is never picked up.  If the task is already
+    running, it will stop at the next cancellation checkpoint (≤50 frames).
 
     If the run is already in a terminal state (completed, failed, cancelled),
     this is a no-op.
@@ -142,6 +144,7 @@ def cancel_run(db: Session, run: AnalysisRun) -> AnalysisRun:
         AnalysisStatus.INGESTING.value,
         AnalysisStatus.PROCESSING.value,
     ):
+        # Mark cancelled in DB FIRST so the worker stops at its next check.
         run.status = AnalysisStatus.CANCELLED.value
         run.current_stage = None
         run.completed_at = datetime.now(timezone.utc)
@@ -149,4 +152,21 @@ def cancel_run(db: Session, run: AnalysisRun) -> AnalysisRun:
         run.error_message = "Processing cancelled by user."
         db.commit()
         db.refresh(run)
+
+        # Attempt to revoke the Celery task (removes it from the queue if not
+        # yet started; has no effect on a running task — the DB check handles that).
+        if run.celery_task_id:
+            try:
+                from celery.result import AsyncResult  # noqa: PLC0415
+                from worker.celery_app import celery_app  # noqa: PLC0415
+                AsyncResult(run.celery_task_id, app=celery_app).revoke(terminate=False)
+                import logging
+                logging.getLogger(__name__).info(
+                    "Revoked Celery task %s for run %s", run.celery_task_id, run.id
+                )
+            except Exception:
+                # Non-fatal — the DB cancellation check in the worker is the
+                # authoritative stop mechanism.
+                pass
+
     return run
