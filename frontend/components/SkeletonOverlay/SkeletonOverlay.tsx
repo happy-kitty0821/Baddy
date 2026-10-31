@@ -41,9 +41,10 @@ const SKELETON_CONNECTIONS: [number, number][] = [
 
 const CONFIDENCE_THRESHOLD = 0.3;
 // Maximum milliseconds between the video time and a stored frame to still
-// draw it.  At 30fps a frame is 33ms; 50ms = ≤1.5 frames tolerance.
-// Below this the skeleton follows the player precisely with no trailing.
-const FRAME_TOLERANCE_MS = 50;
+// draw it.  At 30fps a frame is 33ms; 80ms = ~2.4 frames tolerance.
+// Wider than 50ms to reduce blank flashes when the clock lands slightly
+// outside a frame boundary without introducing visible ghost images.
+const FRAME_TOLERANCE_MS = 80;
 
 interface SkeletonOverlayProps {
   runId: string;
@@ -162,22 +163,76 @@ export default function SkeletonOverlay({
 
       const frames = framesRef.current;
 
-      // Find the nearest stored frame within FRAME_TOLERANCE_MS.
-      let nearest: PoseFrame[] | null = null;
-      let nearestDiff = Infinity;
-
-      for (const [ts, fs] of frames) {
-        const diff = Math.abs(ts - currentTimeMs);
-        if (diff < nearestDiff && diff <= FRAME_TOLERANCE_MS) {
-          nearestDiff = diff;
-          nearest = fs;
-        }
+      // Build a sorted key array for binary-search-based interpolation.
+      const sortedKeys = Array.from(frames.keys()).sort((a, b) => a - b);
+      if (sortedKeys.length === 0) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        return;
       }
+
+      // Binary-search for the last key ≤ currentTimeMs.
+      let lo = 0, hi = sortedKeys.length - 1, prevIdx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (sortedKeys[mid] <= currentTimeMs) { prevIdx = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+
+      const prevTs = prevIdx >= 0 ? sortedKeys[prevIdx] : null;
+      const nextTs = prevIdx < sortedKeys.length - 1 ? sortedKeys[prevIdx + 1] : null;
+
+      // Tolerance guard — if neither neighbour is close enough, clear and bail.
+      const prevOk = prevTs !== null && currentTimeMs - prevTs <= FRAME_TOLERANCE_MS;
+      const nextOk = nextTs !== null && nextTs - currentTimeMs <= FRAME_TOLERANCE_MS;
 
       // Always clear — prevents ghost/trailing images when out of tolerance.
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-      if (!nearest || nearest.length === 0) return;
+      if (!prevOk && !nextOk) return;
+
+      // Only interpolate when both neighbours exist AND gap is ≤ 200ms.
+      // If the gap is too large (dropped frames), snap to prevTs.
+      const shouldInterpolate =
+        prevTs !== null && nextTs !== null && (nextTs - prevTs) <= 200;
+
+      const t = shouldInterpolate
+        ? Math.max(0, Math.min(1, (currentTimeMs - prevTs!) / (nextTs! - prevTs!)))
+        : 0;
+
+      const prevFrames = prevTs !== null ? (frames.get(prevTs) ?? []) : [];
+      const nextFrames = nextTs !== null ? (frames.get(nextTs) ?? []) : [];
+
+      // Build one interpolated PoseFrame per prevFrame entry.
+      const renderFrames: PoseFrame[] = prevFrames.map((prevFrame) => {
+        if (!shouldInterpolate || t === 0) return prevFrame;
+
+        // Match nextFrame by player_track_id for same-player interpolation.
+        const nextFrame = nextFrames.find(
+          (nf) => nf.player_track_id === prevFrame.player_track_id
+        );
+        if (!nextFrame) return prevFrame;
+
+        const kps = prevFrame.keypoints ?? [];
+        const nkps = nextFrame.keypoints ?? [];
+        const interpKps: number[][] = kps.map((pk, i) => {
+          const nk = nkps[i];
+          // Only interpolate when both keypoints are confident enough.
+          if (!nk || (pk[2] ?? 0) <= 0.15 || (nk[2] ?? 0) <= 0.15) {
+            return pk;
+          }
+          return [
+            pk[0] + (nk[0] - pk[0]) * t,
+            pk[1] + (nk[1] - pk[1]) * t,
+            pk[2] + (nk[2] - pk[2]) * t,
+          ];
+        });
+
+        // Return a synthetic PoseFrame with interpolated keypoints.
+        // bbox is deliberately kept from prevFrame (not interpolated).
+        return { ...prevFrame, keypoints: interpKps };
+      });
+
+      if (renderFrames.length === 0) return;
 
       const canvas = ctx.canvas;
       if (canvas.width === 0 || canvas.height === 0) return;
@@ -232,7 +287,7 @@ export default function SkeletonOverlay({
       const mapX = (px: number) => px * scaleX + offsetX;
       const mapY = (py: number) => py * scaleY + offsetY;
 
-      for (const frame of nearest) {
+      for (const frame of renderFrames) {
         const kps = frame.keypoints;
         if (!kps || kps.length === 0) continue;
 

@@ -14,6 +14,7 @@ import VideoPlayer from "@/components/VideoPlayer/VideoPlayer";
 import ProcessingStatus from "@/components/ProcessingStatus/ProcessingStatus";
 import SkeletonOverlay from "@/components/SkeletonOverlay/SkeletonOverlay";
 import PlayerPanel from "@/components/PlayerPanel/PlayerPanel";
+import CourtHeatmap from "@/components/CourtHeatmap/CourtHeatmap";
 import {
   computeFps,
   formatDate,
@@ -43,6 +44,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showBoxes, setShowBoxes] = useState(true);
   const [showTrackIds, setShowTrackIds] = useState(true);
+  const [showHeatmap, setShowHeatmap] = useState(false);
   const [visionStarted, setVisionStarted] = useState(false);
   // Which court side's skeleton to show: null = both, "near" or "far".
   const [selectedCourtSide, setSelectedCourtSide] = useState<"near" | "far" | null>(null);
@@ -240,6 +242,17 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                 className="accent-green-500" />
               Track IDs
             </label>
+            {hasVisionResults && (
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showHeatmap}
+                  onChange={(e) => setShowHeatmap(e.target.checked)}
+                  className="accent-green-500"
+                />
+                Heatmap
+              </label>
+            )}
             {selectedCourtSide && (
               <button
                 onClick={() => setSelectedCourtSide(null)}
@@ -249,6 +262,23 @@ export default function MatchDetail({ id }: MatchDetailProps) {
               </button>
             )}
           </div>
+          {hasVisionResults && showHeatmap && latestRun && (
+            <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 space-y-2">
+              <h2 className="text-sm font-semibold text-gray-300">
+                Movement Heatmap
+                {selectedCourtSide
+                  ? ` — ${selectedCourtSide === "near" ? "Near End" : "Far End"}`
+                  : " — All Players"}
+              </h2>
+              <CourtHeatmap
+                runId={latestRun.id}
+                courtSide={selectedCourtSide}
+                sourceWidth={match.width || 1920}
+                sourceHeight={match.height || 1080}
+                enabled={showHeatmap}
+              />
+            </div>
+          )}
         </div>
       ) : (
         <div className="rounded-lg border border-dashed border-gray-700 flex items-center justify-center aspect-video">
