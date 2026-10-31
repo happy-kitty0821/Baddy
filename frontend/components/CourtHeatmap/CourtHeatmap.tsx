@@ -8,7 +8,8 @@ import apiClient from "@/lib/api";
 const COLS = 40;
 const ROWS = 22;
 // Pixel size of each grid cell on the canvas.
-const CELL_PX = 16;
+// COLS * CELL_PX = 40 * 15 = 600px; ROWS * CELL_PX = 22 * 15 = 330px.
+const CELL_PX = 15;
 
 interface CourtHeatmapProps {
   runId: string;
@@ -62,6 +63,9 @@ export default function CourtHeatmap({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const framesRef = useRef<PoseFrame[]>([]);
   const [loading, setLoading] = useState(false);
+  // Incremented each time framesRef.current is committed, so the draw effect
+  // re-fires even if `loading` doesn't change (e.g. incremental updates later).
+  const [drawVersion, setDrawVersion] = useState(0);
 
   // Set canvas pixel dimensions once on mount.
   useEffect(() => {
@@ -101,6 +105,7 @@ export default function CourtHeatmap({
 
       if (!cancelled) {
         framesRef.current = allFrames;
+        setDrawVersion((v) => v + 1);
         setLoading(false);
       }
     }
@@ -112,7 +117,8 @@ export default function CourtHeatmap({
     };
   }, [runId, courtSide, enabled]);
 
-  // Redraw canvas whenever loading finishes (framesRef is updated before setLoading(false)).
+  // Redraw canvas whenever frame data changes (drawVersion increments alongside
+  // framesRef.current writes) or loading finishes, or dimensions change.
   useEffect(() => {
     if (loading) return;
     const canvas = canvasRef.current;
@@ -189,20 +195,20 @@ export default function CourtHeatmap({
     ctx.lineTo(W / 2, H - pad);
     ctx.stroke();
 
-    // Short service lines at ~1/6 and 5/6 of court length (horizontal).
-    const sl1Y = H * (1 / 6);
-    const sl2Y = H * (5 / 6);
+    // Short service lines at ~1/6 and 5/6 of court length — vertical, parallel to the net.
+    const sl1X = W * (1 / 6);
+    const sl2X = W * (5 / 6);
 
     ctx.beginPath();
-    ctx.moveTo(pad, sl1Y);
-    ctx.lineTo(W - pad, sl1Y);
+    ctx.moveTo(sl1X, pad);
+    ctx.lineTo(sl1X, H - pad);
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.moveTo(pad, sl2Y);
-    ctx.lineTo(W - pad, sl2Y);
+    ctx.moveTo(sl2X, pad);
+    ctx.lineTo(sl2X, H - pad);
     ctx.stroke();
-  }, [loading, sourceWidth, sourceHeight]);
+  }, [loading, drawVersion, sourceWidth, sourceHeight]);
 
   return (
     <div className="relative w-full" style={{ aspectRatio: `${COLS}/${ROWS}` }}>
