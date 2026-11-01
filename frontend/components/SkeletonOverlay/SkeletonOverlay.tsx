@@ -144,6 +144,24 @@ export default function SkeletonOverlay({
     });
   }, [runId, enabled, courtSide, fetchWindow]);
 
+  // ── Background pre-fetch: polls every 2 seconds to load the next window ──
+  // Deliberately kept OUTSIDE the renderer so the draw callback is purely
+  // synchronous canvas operations with no async / microtask pressure.
+  const currentTimeSecRef = useRef(0);
+  useEffect(() => {
+    if (!enabled || !runId) return;
+
+    const id = setInterval(() => {
+      const currentTimeMs = Math.round(currentTimeSecRef.current * 1000);
+      const windowEnd = fetchedWindowRef.current.end;
+      if (windowEnd > 0 && currentTimeMs > windowEnd - 5000) {
+        fetchWindow(windowEnd, 30000);
+      }
+    }, 2000);
+
+    return () => clearInterval(id);
+  }, [enabled, runId, fetchWindow]);
+
   // ── Stable renderer — reads from refs, never becomes stale ───────────────
   const renderer = useCallback(
     (ctx: CanvasRenderingContext2D, currentTime: number) => {
@@ -152,14 +170,12 @@ export default function SkeletonOverlay({
         return;
       }
 
+      // Keep currentTimeSecRef updated so the interval above can see
+      // the latest video time without any async work inside this callback.
+      currentTimeSecRef.current = currentTime;
+
       const currentTimeMs = Math.round(currentTime * 1000);
       if (isNaN(currentTimeMs) || currentTimeMs < 0) return;
-
-      // Pre-fetch the next window 5 seconds before it's needed.
-      const windowEnd = fetchedWindowRef.current.end;
-      if (windowEnd > 0 && currentTimeMs > windowEnd - 5000) {
-        fetchWindow(windowEnd, 30000);
-      }
 
       const frames = framesRef.current;
 
@@ -351,8 +367,10 @@ export default function SkeletonOverlay({
     },
     // Deliberately only depends on primitive/stable values.
     // framesRef and fetchedWindowRef are refs so they don't trigger re-renders.
+    // fetchWindow is intentionally excluded — it runs in its own interval,
+    // never inside the synchronous rAF draw callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabled, showBoxes, showTrackIds, sourceWidth, sourceHeight, fetchWindow]
+    [enabled, showBoxes, showTrackIds, sourceWidth, sourceHeight]
   );
 
   // ── Register renderer once (and whenever it genuinely changes) ────────────

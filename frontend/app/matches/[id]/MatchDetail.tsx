@@ -48,6 +48,12 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [visionStarted, setVisionStarted] = useState(false);
   // Which court side's skeleton to show: null = both, "near" or "far".
   const [selectedCourtSide, setSelectedCourtSide] = useState<"near" | "far" | null>(null);
+  // Current video playback time in milliseconds — driven by VideoPlayer's
+  // onTimeUpdate callback and passed to CourtHeatmap for dynamic redraws.
+  const [videoTimeMs, setVideoTimeMs] = useState(0);
+  const handleTimeUpdate = useCallback((currentTime: number) => {
+    setVideoTimeMs(Math.round(currentTime * 1000));
+  }, []);
   // Store the overlay renderer in a ref (not state) to avoid React treating
   // the function as an updater when passed to useState.
   const overlayRendererRef = useRef<((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null>(null);  const [renderTick, setRenderTick] = useState(0);
@@ -208,6 +214,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
           <VideoPlayer
             assetId={match.source_asset_id}
             renderOverlay={overlayRendererRef.current ?? undefined}
+            onTimeUpdate={handleTimeUpdate}
           />
           {/* Phase 2 overlay controls */}
           {showSkeleton && latestRun && (
@@ -276,6 +283,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                 sourceWidth={match.width || 1920}
                 sourceHeight={match.height || 1080}
                 enabled={showHeatmap}
+                currentTimeMs={videoTimeMs}
               />
             </div>
           )}
