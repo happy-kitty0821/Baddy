@@ -308,20 +308,23 @@ export default function SkeletonOverlay({
         if (!kps || kps.length === 0) continue;
 
         // ── Bounding box ──────────────────────────────────────────────────
+        // bbox_x/y from Ultralytics xywh are the CENTRE (cx, cy).
+        // strokeRect expects the top-left corner, so subtract half w/h first.
         if (showBoxes && frame.bbox_x != null && frame.bbox_y != null &&
             frame.bbox_w != null && frame.bbox_h != null) {
-          const bx = mapX(frame.bbox_x);
-          const by = mapY(frame.bbox_y);
           const bw = frame.bbox_w * scaleX;
           const bh = frame.bbox_h * scaleY;
-          ctx.globalAlpha = 0.4;
+          // Convert centre → top-left in canvas space.
+          const bx = mapX(frame.bbox_x) - bw / 2;
+          const by = mapY(frame.bbox_y) - bh / 2;
+          ctx.globalAlpha = 0.55;
           ctx.strokeStyle = "rgba(0, 255, 100, 1)";
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 2;
           ctx.strokeRect(bx, by, bw, bh);
           ctx.globalAlpha = 1;
 
           if (showTrackIds) {
-            ctx.fillStyle = "rgba(0, 255, 100, 0.8)";
+            ctx.fillStyle = "rgba(0, 255, 100, 0.9)";
             ctx.font = "bold 12px sans-serif";
             ctx.fillText("player", bx, by - 4);
           }

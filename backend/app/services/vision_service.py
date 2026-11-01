@@ -227,16 +227,47 @@ def query_poses(
         query = query.filter(PoseFrame.player_track_id == track_id)
 
     if court_side is not None:
-        # Per-frame court half: bbox_y + bbox_h/2 vs source_height/2.
-        # Near end = player is in the bottom half of the frame (Y >= 50%).
-        # Far end  = player is in the top half of the frame (Y < 50%).
-        # Use coalesce to handle NULL bbox values safely.
-        bbox_centre = PoseFrame.bbox_y + (PoseFrame.bbox_h / 2.0)
-        half = PoseFrame.source_height / 2.0
+        # Per-frame court half using the source dimensions stored on each frame.
+        #
+        # Landscape (source_width > source_height):
+        #   Split on Y axis.  Near end = bottom half (bbox_y + bbox_h/2 >= source_height/2).
+        #   Far end  = top half.
+        #
+        # Portrait (source_height > source_width, e.g. 608×1080 phone recording):
+        #   Split on X axis.  Near end = right half (bbox_x >= source_width/2).
+        #   Far end  = left half.
+        #
+        # We use the per-frame source dimensions (not a passed-in parameter) so
+        # mixed-orientation videos work correctly.
+        from sqlalchemy import case  # noqa: PLC0415
+
+        is_portrait = PoseFrame.source_height > PoseFrame.source_width
+
+        # Centre coordinates.
+        bbox_cx = PoseFrame.bbox_x  # Ultralytics xywh stores centre already
+        bbox_cy = PoseFrame.bbox_y
+
+        half_x = PoseFrame.source_width  / 2.0
+        half_y = PoseFrame.source_height / 2.0
+
+        # For each frame choose the correct axis based on its own orientation.
+        # Landscape → Y-axis split; portrait → X-axis split.
         if court_side == "near":
-            query = query.filter(bbox_centre >= half)
+            # Near: bottom half (landscape) OR right half (portrait)
+            query = query.filter(
+                case(
+                    (is_portrait, bbox_cx >= half_x),
+                    else_=bbox_cy >= half_y,
+                )
+            )
         elif court_side == "far":
-            query = query.filter(bbox_centre < half)
+            # Far: top half (landscape) OR left half (portrait)
+            query = query.filter(
+                case(
+                    (is_portrait, bbox_cx < half_x),
+                    else_=bbox_cy < half_y,
+                )
+            )
 
     total = query.count()
     items = (

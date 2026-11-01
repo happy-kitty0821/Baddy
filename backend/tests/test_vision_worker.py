@@ -60,7 +60,7 @@ class MockDetection:
 
 class MockAdapter:
     """A mock ModelAdapter that yields fake detections for a fixed number of frames."""
-    def __init__(self, num_frames=10, tracks=(1, 2)):
+    def __init__(self, num_frames=60, tracks=(1, 2)):
         self._num_frames = num_frames
         self._tracks = tracks
         self._loaded = False
@@ -166,7 +166,7 @@ def vision_test_setup(db_session, test_storage, small_video):
     match.height = 1080
     match.fps_num = 30
     match.fps_den = 1
-    match.duration_ms = 10000
+    match.duration_ms = 90000  # 90 s — ensures 45 frames at frame_skip=2 (>= min_track_frames=30)
     match.status = MatchStatus.READY.value
     db_session.commit()
     return match, run, db_session
@@ -182,7 +182,7 @@ class TestVisionPipeline:
         db_mod.SessionLocal = _FixedSession(db_session)
 
         try:
-            adapter = MockAdapter(num_frames=10, tracks=(1, 2))
+            adapter = MockAdapter(tracks=(1, 2))
             run_vision_sync(
                 run_id=run.id, match_id=match.id,
                 storage=test_storage, adapter=adapter,
@@ -223,7 +223,7 @@ class TestVisionPipeline:
         db_mod.SessionLocal = _FixedSession(db_session)
 
         try:
-            adapter = MockAdapter(num_frames=10, tracks=(1, 2))
+            adapter = MockAdapter(tracks=(1, 2))
             run_vision_sync(run_id=run.id, match_id=match.id,
                            storage=test_storage, adapter=adapter)
             # Second call should skip (run already COMPLETED).
@@ -244,7 +244,7 @@ class TestVisionPipeline:
         db_mod.SessionLocal = _FixedSession(db_session)
 
         try:
-            adapter = MockAdapter(num_frames=10, tracks=(1, 2))
+            adapter = MockAdapter(tracks=(1, 2))
             adapter.load_error = "CUDA not available"
             run_vision_sync(run_id=run.id, match_id=match.id,
                            storage=test_storage, adapter=adapter)

@@ -213,6 +213,14 @@ def run_vision_sync(
         logger.info("Source fps=%.1f, target_fps=%d, frame_skip=%d",
                     source_fps, target_fps, frame_skip)
 
+        # Portrait detection: log for diagnostics.
+        is_portrait = (match.height or 0) > (match.width or 0)
+        logger.info(
+            "Source dimensions: %dx%d (%s)",
+            match.width or 0, match.height or 0,
+            "portrait" if is_portrait else "landscape",
+        )
+
         # ── Step 4: Load the model ─────────────────────────────────────────
         update_run_progress(db, run, 8, VisionStage.LOAD_MODEL.value)
 
@@ -278,6 +286,12 @@ def run_vision_sync(
                     if det.track_id is None:
                         continue
 
+                    # Drop low-quality pose frames early — ghost detections
+                    # (partial body at frame edge, etc.) have nearly zero
+                    # visible keypoints and would pollute the overlay.
+                    if det.keypoint_conf < settings.vision_min_pose_conf:
+                        continue
+
                     # Create a PlayerTrack row if this is the first sighting.
                     if det.track_id not in track_map:
                         track_label_counter += 1
@@ -294,6 +308,8 @@ def run_vision_sync(
                     pt = track_map[det.track_id]
 
                     # Build the pose frame record.
+                    src_w = match.width or (frame.shape[1] if frame is not None else 1920)
+                    src_h = match.height or (frame.shape[0] if frame is not None else 1080)
                     pf = PoseFrame(
                         analysis_run_id=run_id,
                         player_track_id=pt.id,
@@ -306,8 +322,8 @@ def run_vision_sync(
                         bbox_conf=det.bbox_conf,
                         keypoints_json=json.dumps(det.keypoints),
                         overall_conf=det.keypoint_conf,
-                        source_width=match.width or (frame.shape[1] if frame is not None else 1920),
-                        source_height=match.height or (frame.shape[0] if frame is not None else 1080),
+                        source_width=src_w,
+                        source_height=src_h,
                         model_id=det.model_id,
                     )
                     db.add(pf)
@@ -345,6 +361,53 @@ def run_vision_sync(
         logger.info("Vision complete: %d frames processed, %d tracks, %d pose frames",
                     frames_processed, len(track_map),
                     len(pose_frames_to_save))
+
+        # ── Step 5b: Prune false-positive tracks ─────────────────────────────
+        # Remove tracks with fewer than vision_min_track_frames pose frames.
+        # These are short-lived ByteTrack IDs from spectators, shadows, or
+        # partial detections near the court edge.  Their pose frames are
+        # deleted by CASCADE on the FK.
+        # Also enforce the max-player cap: keep only the top N tracks by
+        # frame count so spectators who happened to stay in frame don't appear.
+        from sqlalchemy import func as _func  # noqa: PLC0415
+
+        track_counts = (
+            db.query(
+                PlayerTrack.id,
+                _func.count(PoseFrame.id).label("n"),
+            )
+            .join(PoseFrame, PoseFrame.player_track_id == PlayerTrack.id)
+            .filter(PlayerTrack.analysis_run_id == run_id)
+            .group_by(PlayerTrack.id)
+            .order_by(_func.count(PoseFrame.id).desc())
+            .all()
+        )
+
+        min_frames = settings.vision_min_track_frames
+        max_players = settings.vision_max_players
+
+        keep_ids: set[str] = set()
+        for rank, (tid, n) in enumerate(track_counts):
+            if n >= min_frames and rank < max_players:
+                keep_ids.add(tid)
+
+        pruned = 0
+        all_tracks = db.query(PlayerTrack).filter(
+            PlayerTrack.analysis_run_id == run_id
+        ).all()
+        for pt in all_tracks:
+            if pt.id not in keep_ids:
+                db.delete(pt)
+                pruned += 1
+
+        if pruned:
+            db.commit()
+            logger.info(
+                "Pruned %d false-positive track(s) (min_frames=%d, max_players=%d). "
+                "Kept %d track(s): %s",
+                pruned, min_frames, max_players,
+                len(keep_ids), keep_ids,
+            )
 
         # ── Step 6: Finalize ────────────────────────────────────────────────
         update_run_progress(db, run, 95, VisionStage.FINALIZE.value)

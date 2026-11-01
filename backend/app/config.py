@@ -106,12 +106,24 @@ class Settings(BaseSettings):
     # source framerate (e.g. 30 or 60 fps).
     vision_target_fps: int = 15
     # Minimum detection confidence for a player/keypoint to be kept.
-    vision_confidence: float = 0.3
-    # YOLO inference image size (pixels, square).
+    vision_confidence: float = 0.35
+    # YOLO inference image size (pixels, square).  For portrait videos the
+    # worker overrides this with an orientation-aware tuple.
     vision_img_size: int = 640
     # Optional directory for model weight files (.pt).  Empty uses the
     # Ultralytics default cache location.
     model_weights_dir: str = ""
+    # Maximum number of player tracks to keep per run.  Tracks beyond this cap
+    # (by frame count) are treated as spectators/false positives and pruned.
+    # Singles = 2, Doubles = 4.  Default 4 covers both formats.
+    vision_max_players: int = 4
+    # Minimum number of pose frames a track must have to survive post-processing.
+    # Short-lived ByteTrack IDs (spectators walking past) are pruned below this.
+    # Mirrors _MIN_TRACK_FRAMES in vision_service.py but applied at write time.
+    vision_min_track_frames: int = 30
+    # Minimum overall keypoint confidence a pose frame must have to be stored.
+    # Frames below this are ghost detections (partial body outside frame, etc.).
+    vision_min_pose_conf: float = 0.20
 
     # ── FFmpeg / ffprobe location ──────────────────────────────────────────
     # Optional: set to the directory that contains ffmpeg.exe and ffprobe.exe
