@@ -44,7 +44,6 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showBoxes, setShowBoxes] = useState(true);
   const [showTrackIds, setShowTrackIds] = useState(true);
-  const [showHeatmap, setShowHeatmap] = useState(false);
   const [visionStarted, setVisionStarted] = useState(false);
   // Which court side's skeleton to show: null = both, "near" or "far".
   const [selectedCourtSide, setSelectedCourtSide] = useState<"near" | "far" | null>(null);
@@ -176,8 +175,8 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const hasVisionResults = latestRun?.status === "completed";
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
-      {/* Header */}
+    <div className="space-y-6">
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">{match.title}</h1>
@@ -190,7 +189,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
             )}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           {!deleteConfirm ? (
             <button onClick={() => setDeleteConfirm(true)}
               className="rounded border border-red-700 px-3 py-1 text-xs text-red-400 hover:bg-red-900/40 transition-colors">
@@ -208,206 +207,233 @@ export default function MatchDetail({ id }: MatchDetailProps) {
         </div>
       </div>
 
-      {/* Video player — shown as soon as the source asset exists, even before ingestion completes */}
-      {match.source_asset_id ? (
-        <div className="space-y-2">
-          <VideoPlayer
-            assetId={match.source_asset_id}
-            renderOverlay={overlayRendererRef.current ?? undefined}
-            onTimeUpdate={handleTimeUpdate}
-          />
-          {/* Phase 2 overlay controls */}
-          {showSkeleton && latestRun && (
-            <SkeletonOverlay
-              runId={latestRun.id}
-              enabled={showSkeleton}
-              showBoxes={showBoxes}
-              showTrackIds={showTrackIds}
-              courtSide={selectedCourtSide}
-              sourceWidth={match.width || 1920}
-              sourceHeight={match.height || 1080}
-              onRendererReady={setOverlayRenderer}
-            />
-          )}
-          {/* Overlay toggles */}
-          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={showSkeleton}
-                onChange={(e) => setShowSkeleton(e.target.checked)}
-                className="accent-green-500" />
-              Skeleton
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={showBoxes}
-                onChange={(e) => setShowBoxes(e.target.checked)}
-                className="accent-green-500" />
-              Bounding boxes
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" checked={showTrackIds}
-                onChange={(e) => setShowTrackIds(e.target.checked)}
-                className="accent-green-500" />
-              Track IDs
-            </label>
-            {hasVisionResults && (
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showHeatmap}
-                  onChange={(e) => setShowHeatmap(e.target.checked)}
-                  className="accent-green-500"
+      {/* ── Main two-column area: video left, heatmap + info right ─────────── */}
+      <div className="flex gap-6 items-start">
+
+        {/* ── LEFT COLUMN — video player (takes remaining width) ────────────── */}
+        <div className="flex-1 min-w-0 space-y-2">
+          {match.source_asset_id ? (
+            <>
+              <VideoPlayer
+                assetId={match.source_asset_id}
+                renderOverlay={overlayRendererRef.current ?? undefined}
+                onTimeUpdate={handleTimeUpdate}
+              />
+
+              {/* Hidden overlay logic component */}
+              {showSkeleton && latestRun && (
+                <SkeletonOverlay
+                  runId={latestRun.id}
+                  enabled={showSkeleton}
+                  showBoxes={showBoxes}
+                  showTrackIds={showTrackIds}
+                  courtSide={selectedCourtSide}
+                  sourceWidth={match.width || 1920}
+                  sourceHeight={match.height || 1080}
+                  onRendererReady={setOverlayRenderer}
                 />
-                Heatmap
-              </label>
-            )}
-            {selectedCourtSide && (
+              )}
+
+              {/* Overlay toggles */}
+              <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400 pt-1">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={showSkeleton}
+                    onChange={(e) => setShowSkeleton(e.target.checked)}
+                    className="accent-green-500" />
+                  Skeleton
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={showBoxes}
+                    onChange={(e) => setShowBoxes(e.target.checked)}
+                    className="accent-green-500" />
+                  Boxes
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" checked={showTrackIds}
+                    onChange={(e) => setShowTrackIds(e.target.checked)}
+                    className="accent-green-500" />
+                  Track IDs
+                </label>
+                {selectedCourtSide && (
+                  <button
+                    onClick={() => setSelectedCourtSide(null)}
+                    className="ml-auto rounded border border-gray-600 px-2 py-0.5 text-gray-400 hover:bg-gray-700 transition-colors"
+                  >
+                    {selectedCourtSide === "near" ? "Near End" : "Far End"} — show both
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-700 flex items-center justify-center aspect-video">
+              <p className="text-gray-500 text-sm">No video available.</p>
+            </div>
+          )}
+
+          {/* Active run progress */}
+          {runIsActive && (
+            <div className="space-y-2 pt-1">
+              <ProcessingStatus
+                runId={latestRun!.id}
+                onComplete={handleRunComplete}
+                onError={handleRunError}
+              />
               <button
-                onClick={() => setSelectedCourtSide(null)}
-                className="ml-auto rounded border border-gray-600 px-2 py-0.5 text-gray-400 hover:bg-gray-700 transition-colors"
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="rounded border border-red-700 px-3 py-1 text-xs text-red-400 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
               >
-                Showing: {selectedCourtSide === "near" ? "Near End" : "Far End"} — click to show both
+                {cancelling ? "Cancelling…" : "Cancel processing"}
               </button>
-            )}
-          </div>
-          {hasVisionResults && showHeatmap && latestRun && (
-            <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 space-y-2">
-              <h2 className="text-sm font-semibold text-gray-300">
-                Movement Heatmap
-                {selectedCourtSide
-                  ? ` — ${selectedCourtSide === "near" ? "Near End" : "Far End"}`
-                  : " — All Players"}
-              </h2>
+            </div>
+          )}
+
+          {/* Failed or cancelled run */}
+          {(latestRun?.status === "failed" || latestRun?.status === "cancelled") && (
+            <div className={`rounded-lg border p-4 space-y-2 ${
+              latestRun.status === "failed" ? "border-red-700 bg-red-900/20" : "border-gray-600 bg-gray-800/40"
+            }`}>
+              <p className={`text-sm font-medium ${
+                latestRun.status === "failed" ? "text-red-300" : "text-gray-300"
+              }`}>
+                {latestRun.status === "failed"
+                  ? `Processing failed${latestRun.error_code ? ` (${latestRun.error_code})` : ""}`
+                  : "Processing cancelled"}
+              </p>
+              {latestRun.error_message && latestRun.status === "failed" && (
+                <p className="text-xs text-red-400">{latestRun.error_message}</p>
+              )}
+              <button onClick={handleRetry} disabled={retrying}
+                className="mt-2 rounded border border-gray-600 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50 transition-colors">
+                {retrying ? "Retrying…" : "Re-run processing"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ── RIGHT COLUMN — heatmap + side panels (fixed width) ────────────── */}
+        <div className="w-80 xl:w-96 shrink-0 space-y-4">
+
+          {/* Movement Heatmap — always shown when vision results exist */}
+          {hasVisionResults && latestRun ? (
+            <div className="rounded-lg border border-gray-700 bg-gray-900 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">
+                  Movement Heatmap
+                </h2>
+                {selectedCourtSide && (
+                  <span className="text-xs text-green-400">
+                    {selectedCourtSide === "near" ? "Near End" : "Far End"}
+                  </span>
+                )}
+              </div>
               <CourtHeatmap
                 runId={latestRun.id}
                 courtSide={selectedCourtSide}
                 sourceWidth={match.width || 1920}
                 sourceHeight={match.height || 1080}
-                enabled={showHeatmap}
+                enabled={true}
                 currentTimeMs={videoTimeMs}
               />
+              <p className="text-[10px] text-gray-600 text-center">
+                Builds as video plays · resets on court-side change
+              </p>
+            </div>
+          ) : (
+            /* Placeholder while no vision data */
+            <div className="rounded-lg border border-dashed border-gray-700 bg-gray-900/50 p-3 space-y-2">
+              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Movement Heatmap
+              </h2>
+              <div className="rounded bg-gray-800 flex items-center justify-center text-center py-10">
+                <p className="text-xs text-gray-600 px-4">
+                  {visionAvailable
+                    ? "Run Player & Pose Analysis to unlock the heatmap"
+                    : "Complete video processing first"}
+                </p>
+              </div>
             </div>
           )}
-        </div>
-      ) : (
-        <div className="rounded-lg border border-dashed border-gray-700 flex items-center justify-center aspect-video">
-          <p className="text-gray-500 text-sm">No video available.</p>
-        </div>
-      )}
 
-      {/* Active run progress */}
-      {runIsActive && (
-        <div className="space-y-2">
-          <ProcessingStatus
-            runId={latestRun!.id}
-            onComplete={handleRunComplete}
-            onError={handleRunError}
-          />
-          <button
-            onClick={handleCancel}
-            disabled={cancelling}
-            className="rounded border border-red-700 px-3 py-1 text-xs text-red-400 hover:bg-red-900/40 disabled:opacity-50 transition-colors"
-          >
-            {cancelling ? "Cancelling…" : "Cancel processing"}
-          </button>
-        </div>
-      )}
-
-      {/* Failed or cancelled run */}
-      {(latestRun?.status === "failed" || latestRun?.status === "cancelled") && (
-        <div className={`rounded-lg border p-4 space-y-2 ${
-          latestRun.status === "failed" ? "border-red-700 bg-red-900/20" : "border-gray-600 bg-gray-800/40"
-        }`}>
-          <p className={`text-sm font-medium ${
-            latestRun.status === "failed" ? "text-red-300" : "text-gray-300"
-          }`}>
-            {latestRun.status === "failed"
-              ? `Processing failed${latestRun.error_code ? ` (${latestRun.error_code})` : ""}`
-              : "Processing cancelled"}
-          </p>
-          {latestRun.error_message && latestRun.status === "failed" && (
-            <p className="text-xs text-red-400">{latestRun.error_message}</p>
-          )}
-          <button onClick={handleRetry} disabled={retrying}
-            className="mt-2 rounded border border-gray-600 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50 transition-colors">
-            {retrying ? "Retrying…" : "Re-run processing"}
-          </button>
-        </div>
-      )}
-
-      {/* Phase 2: Vision analysis trigger */}
-      {visionAvailable && (
-        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-300">Player & Pose Analysis</h2>
-          <p className="text-xs text-gray-500">
-            Detect both players, estimate body poses, and display a green skeleton overlay.
-            Processing happens in the background — you can leave this page.
-          </p>
-          <button
-            onClick={handleStartVision}
-            disabled={visionStarted}
-            className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {visionStarted ? "Starting…" : "Analyse Players"}
-          </button>
-        </div>
-      )}
-
-      {/* Phase 2: Player identity panel */}
-      {hasVisionResults && latestRun && (
-        <PlayerPanel
-          runId={latestRun.id}
-          sourceHeight={match.height || 1080}
-          sourceWidth={match.width || 0}
-          onSideSelected={setSelectedCourtSide}
-        />
-      )}
-
-      {/* Match metadata */}
-      <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
-        <h2 className="text-sm font-semibold text-gray-300 mb-3">Match Details</h2>
-        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
-          {[
-            ["Duration", formatDuration(match.duration_ms)],
-            ["Resolution", match.width ? `${match.width}×${match.height}` : "—"],
-            ["Frame rate", computeFps(match.fps_num, match.fps_den) + " fps"],
-            ["Codec", match.codec ?? "—"],
-            ["File size", formatFileSize(match.file_size_bytes)],
-            ["Uploaded", formatDate(match.uploaded_at)],
-            ["Opponent", match.opponent_label ?? "—"],
-            ["Session type", match.session_type ?? "—"],
-          ].map(([label, value]) => (
-            <div key={label}>
-              <dt className="text-gray-500">{label}</dt>
-              <dd className="text-gray-200">{value}</dd>
+          {/* Vision analysis trigger */}
+          {visionAvailable && (
+            <div className="rounded-lg border border-gray-700 bg-gray-900 p-3 space-y-2">
+              <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">
+                Player & Pose Analysis
+              </h2>
+              <p className="text-xs text-gray-500">
+                Detect players, estimate poses, and build the skeleton overlay and heatmap.
+              </p>
+              <button
+                onClick={handleStartVision}
+                disabled={visionStarted}
+                className="w-full rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {visionStarted ? "Starting…" : "Analyse Players"}
+              </button>
             </div>
-          ))}
-        </dl>
-        {match.notes && (
-          <div className="mt-4">
-            <dt className="text-xs text-gray-500 mb-1">Notes</dt>
-            <dd className="text-sm text-gray-300 whitespace-pre-wrap">{match.notes}</dd>
+          )}
+
+          {/* Player identity panel */}
+          {hasVisionResults && latestRun && (
+            <PlayerPanel
+              runId={latestRun.id}
+              sourceHeight={match.height || 1080}
+              sourceWidth={match.width || 0}
+              onSideSelected={setSelectedCourtSide}
+            />
+          )}
+
+          {/* Match metadata — compact in sidebar */}
+          <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
+            <h2 className="text-xs font-semibold text-gray-300 uppercase tracking-wide mb-2">
+              Match Details
+            </h2>
+            <dl className="space-y-1.5 text-xs">
+              {[
+                ["Duration",    formatDuration(match.duration_ms)],
+                ["Resolution",  match.width ? `${match.width}×${match.height}` : "—"],
+                ["Frame rate",  computeFps(match.fps_num, match.fps_den) + " fps"],
+                ["Codec",       match.codec ?? "—"],
+                ["File size",   formatFileSize(match.file_size_bytes)],
+                ["Uploaded",    formatDate(match.uploaded_at)],
+                ["Opponent",    match.opponent_label ?? "—"],
+                ["Session",     match.session_type ?? "—"],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-2">
+                  <dt className="text-gray-500 shrink-0">{label}</dt>
+                  <dd className="text-gray-200 text-right truncate">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            {match.notes && (
+              <div className="mt-3">
+                <dt className="text-[10px] text-gray-500 mb-1">Notes</dt>
+                <dd className="text-xs text-gray-300 whitespace-pre-wrap">{match.notes}</dd>
+              </div>
+            )}
+            {match.tags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {match.tags.map((tag) => (
+                  <span key={tag} className="rounded bg-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300">{tag}</span>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-        {match.tags.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1">
-            {match.tags.map((tag) => (
-              <span key={tag} className="rounded bg-gray-700 px-2 py-0.5 text-xs text-gray-300">{tag}</span>
-            ))}
-          </div>
-        )}
+        </div>
       </div>
 
-      {/* Phase 3+ placeholders */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* ── Phase 3+ placeholders — full width below ──────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { title: "Court View & Movement", phase: "Phase 3" },
-          { title: "Shuttle Tracking", phase: "Phase 4" },
-          { title: "Shot Timeline", phase: "Phase 5" },
-          { title: "Coaching & Analytics", phase: "Phase 6" },
+          { title: "Shuttle Tracking",      phase: "Phase 4" },
+          { title: "Shot Timeline",         phase: "Phase 5" },
+          { title: "Coaching & Analytics",  phase: "Phase 6" },
         ].map(({ title, phase }) => (
-          <div key={title} className="rounded-lg border border-dashed border-gray-700 p-6 text-center">
-            <p className="text-sm font-medium text-gray-400">{title}</p>
-            <p className="mt-1 text-xs text-gray-600">{phase}</p>
+          <div key={title} className="rounded-lg border border-dashed border-gray-700 p-4 text-center">
+            <p className="text-xs font-medium text-gray-400">{title}</p>
+            <p className="mt-1 text-[10px] text-gray-600">{phase}</p>
           </div>
         ))}
       </div>
