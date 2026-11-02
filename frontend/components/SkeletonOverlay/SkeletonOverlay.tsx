@@ -56,6 +56,14 @@ interface SkeletonOverlayProps {
   /** Source video dimensions in pixels (from match metadata). */
   sourceWidth: number;
   sourceHeight: number;
+  /** Hex colour for the "near" player skeleton/box. Default: #22c55e green. */
+  nearColor?: string;
+  /** Hex colour for the "far" player skeleton/box. Default: #3b82f6 blue. */
+  farColor?: string;
+  /** Label shown next to the "near" player's bounding box. Default: "Near". */
+  nearLabel?: string;
+  /** Label shown next to the "far" player's bounding box. Default: "Far". */
+  farLabel?: string;
   onRendererReady: (
     renderer: ((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null
   ) => void;
@@ -69,6 +77,10 @@ export default function SkeletonOverlay({
   courtSide,
   sourceWidth,
   sourceHeight,
+  nearColor = "#22c55e",
+  farColor  = "#3b82f6",
+  nearLabel = "Near",
+  farLabel  = "Far",
   onRendererReady,
 }: SkeletonOverlayProps) {
   // ── All data in refs — no React state so the renderer never goes stale ───
@@ -307,6 +319,22 @@ export default function SkeletonOverlay({
         const kps = frame.keypoints;
         if (!kps || kps.length === 0) continue;
 
+        // ── Per-frame colour: near vs far based on bbox_y position ───────
+        // Near end = bbox_y >= source_height/2 (landscape), or bbox_x >= source_width/2 (portrait)
+        const isPortraitFrame = frame.source_height > frame.source_width;
+        const isNear = isPortraitFrame
+          ? (frame.bbox_x ?? 0) >= frame.source_width  / 2
+          : (frame.bbox_y ?? 0) >= frame.source_height / 2;
+        const frameColor = isNear ? nearColor : farColor;
+        const frameLabel = isNear ? nearLabel : farLabel;
+
+        // Parse hex to rgba helper
+        const hex = frameColor.replace("#", "");
+        const fr = parseInt(hex.slice(0,2), 16);
+        const fg = parseInt(hex.slice(2,4), 16);
+        const fb = parseInt(hex.slice(4,6), 16);
+        const rgbStr = `${fr},${fg},${fb}`;
+
         // ── Bounding box ──────────────────────────────────────────────────
         // bbox_x/y from Ultralytics xywh are the CENTRE (cx, cy).
         // strokeRect expects the top-left corner, so subtract half w/h first.
@@ -314,19 +342,34 @@ export default function SkeletonOverlay({
             frame.bbox_w != null && frame.bbox_h != null) {
           const bw = frame.bbox_w * scaleX;
           const bh = frame.bbox_h * scaleY;
-          // Convert centre → top-left in canvas space.
           const bx = mapX(frame.bbox_x) - bw / 2;
           const by = mapY(frame.bbox_y) - bh / 2;
-          ctx.globalAlpha = 0.55;
-          ctx.strokeStyle = "rgba(0, 255, 100, 1)";
-          ctx.lineWidth = 2;
+
+          // Box outline
+          ctx.globalAlpha = 0.65;
+          ctx.strokeStyle = `rgba(${rgbStr},1)`;
+          ctx.lineWidth   = 2;
           ctx.strokeRect(bx, by, bw, bh);
           ctx.globalAlpha = 1;
 
+          // Top-left colour swatch + label
           if (showTrackIds) {
-            ctx.fillStyle = "rgba(0, 255, 100, 0.9)";
-            ctx.font = "bold 12px sans-serif";
-            ctx.fillText("player", bx, by - 4);
+            const swatchW = 8, swatchH = 14, pad = 3;
+            const labelText = frameLabel;
+            ctx.font = "bold 11px system-ui, sans-serif";
+            const textW = ctx.measureText(labelText).width;
+            const chipW = swatchW + pad + textW + pad * 2;
+            const chipH = swatchH;
+            // Chip background
+            ctx.fillStyle = "rgba(0,0,0,0.60)";
+            ctx.fillRect(bx, by - chipH - 2, chipW, chipH);
+            // Colour swatch
+            ctx.fillStyle = frameColor;
+            ctx.fillRect(bx + 2, by - chipH - 2 + 2, swatchW, chipH - 4);
+            // Label
+            ctx.fillStyle = "rgba(255,255,255,0.95)";
+            ctx.textBaseline = "middle";
+            ctx.fillText(labelText, bx + swatchW + pad + 2, by - chipH - 2 + chipH / 2);
           }
         }
 
@@ -344,8 +387,8 @@ export default function SkeletonOverlay({
           ctx.moveTo(mapX(ka[0]), mapY(ka[1]));
           ctx.lineTo(mapX(kb[0]), mapY(kb[1]));
           ctx.strokeStyle = confident
-            ? "rgba(0, 255, 80, 0.9)"
-            : "rgba(0, 200, 60, 0.25)";
+            ? `rgba(${rgbStr},0.90)`
+            : `rgba(${rgbStr},0.22)`;
           ctx.lineWidth = confident ? 2.5 : 1;
           ctx.stroke();
         }
@@ -362,8 +405,8 @@ export default function SkeletonOverlay({
           ctx.beginPath();
           ctx.arc(x, y, r, 0, Math.PI * 2);
           ctx.fillStyle = conf > CONFIDENCE_THRESHOLD
-            ? "rgba(0, 255, 80, 1)"
-            : "rgba(0, 200, 60, 0.4)";
+            ? `rgba(${rgbStr},1)`
+            : `rgba(${rgbStr},0.40)`;
           ctx.fill();
         }
       }
@@ -373,7 +416,7 @@ export default function SkeletonOverlay({
     // fetchWindow is intentionally excluded — it runs in its own interval,
     // never inside the synchronous rAF draw callback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [enabled, showBoxes, showTrackIds, sourceWidth, sourceHeight]
+    [enabled, showBoxes, showTrackIds, sourceWidth, sourceHeight, nearColor, farColor, nearLabel, farLabel]
   );
 
   // ── Register renderer once (and whenever it genuinely changes) ────────────
