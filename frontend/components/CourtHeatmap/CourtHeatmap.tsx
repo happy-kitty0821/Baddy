@@ -37,15 +37,31 @@ const SSL = 0.3522;   // short service line from each end
 //    short service line is at x = SSL        (left half → near net)
 //                       and at x = 1 - SSL   (right half → near net)
 
-// ── Camera-to-court mapping constants ────────────────────────────────────────
-// From end-on landscape camera, the players occupy these normalised Y ranges:
-//   Near player (camera-side): Y ≈ 0.48 – 0.97  (high in frame = their baseline)
-//   Far  player (far side):    Y ≈ 0.03 – 0.52  (low in frame  = their baseline)
-// These were measured from real data; they set the depth calibration.
-const NEAR_Y_NET      = 0.48;   // frame Y when near player is at net
-const NEAR_Y_BASELINE = 0.97;   // frame Y when near player is at baseline
-const FAR_Y_BASELINE  = 0.03;   // frame Y when far  player is at baseline
-const FAR_Y_NET       = 0.52;   // frame Y when far  player is at net
+// ── Camera-to-court mapping — calibrated from real data ──────────────────────
+//
+// End-on landscape camera (1920×1080) measured p5/p95 from 397k frames:
+//
+//  NEAR player (camera-side, Y >= 0.5 in frame):
+//    Depth axis (frame Y): p5 = 0.521 (near net)  p95 = 0.759 (back court)
+//    Width axis (frame X): p5 = 0.226 (one side)  p95 = 0.787 (other side)
+//
+//  FAR player (far side, Y < 0.5 in frame):
+//    Depth axis (frame Y): p5 = 0.188 (far baseline)  p95 = 0.496 (near net)
+//    Width axis (frame X): p5 = 0.119  p95 = 0.935
+//
+// We use p5 as the "edge of playing area" so 90% of detections span the court.
+// Mapping: player at p5-depth → canvas edge nearest net (x=0.5)
+//          player at p95-depth → canvas edge at baseline (x=1.0 for near, x=0.0 for far)
+//
+const NEAR_DEPTH_NET      = 0.521;   // frame Y when near player is at net
+const NEAR_DEPTH_BASELINE = 0.759;   // frame Y when near player is at baseline
+const NEAR_WIDTH_MIN      = 0.226;   // frame X at one sideline (near player)
+const NEAR_WIDTH_MAX      = 0.787;   // frame X at other sideline (near player)
+
+const FAR_DEPTH_BASELINE  = 0.188;   // frame Y when far player is at far baseline
+const FAR_DEPTH_NET       = 0.496;   // frame Y when far player is at net
+const FAR_WIDTH_MIN       = 0.119;   // frame X at one sideline (far player)
+const FAR_WIDTH_MAX       = 0.935;   // frame X at other sideline (far player)
 
 interface CourtHeatmapProps {
   runId: string;
@@ -99,15 +115,19 @@ function blurGrid(g: number[][], R: number, C: number): number[][] {
 // ── Coordinate mapping ────────────────────────────────────────────────────────
 // Maps bbox centre (source pixels) → (courtX, courtY) in [0,1] canvas space.
 //
-// Canvas axes:
-//   courtX = 0 → far baseline (left edge)
-//   courtX = 1 → near baseline (right edge)
+// Canvas orientation (landscape, bird's-eye):
+//   courtX = 0 → FAR baseline  (left edge)
+//   courtX = 1 → NEAR baseline (right edge)
 //   courtY = 0 → top doubles sideline
 //   courtY = 1 → bottom doubles sideline
 //
-// Camera geometry (end-on landscape):
-//   Video X = player's position along the baseline → court SHORT axis → canvas Y
-//   Video Y = player's distance from camera        → court LONG  axis → canvas X
+// End-on camera geometry:
+//   frame Y (vertical)   → court DEPTH (how far from camera)  → canvas X
+//   frame X (horizontal) → court WIDTH (left/right along net) → canvas Y
+//
+// Calibration uses the measured p5/p95 of each player's positions so the
+// actual playing area fills the full half-court on the canvas, regardless
+// of how close to the back line the player actually stands.
 //
 function mapToCourtXY(
   bboxX: number,
@@ -117,47 +137,57 @@ function mapToCourtXY(
   isPortrait: boolean,
   courtSide: "near" | "far" | null,
 ): [number, number] | null {
-  const nx = bboxX / sw;
-  const ny = bboxY / sh;
+  const nx = bboxX / sw;  // normalised X in frame [0,1]
+  const ny = bboxY / sh;  // normalised Y in frame [0,1]
 
   if (isPortrait) {
-    // Portrait end-on: Y = court long axis, X = short axis
+    // Portrait end-on: long axis of court = video Y, short axis = video X
     return [ny, nx];
   }
 
-  // Landscape end-on:
-  // Video X → canvas Y  (position along baseline, 0=left edge of court)
-  // Video Y → canvas X  (depth: high Y = near baseline = right of canvas)
-
+  // ── NEAR player: occupies the right half of the canvas (courtX 0.5 → 1.0) ──
   if (courtSide === "near") {
-    // Near player: frame Y in [NEAR_Y_NET, NEAR_Y_BASELINE]
-    // courtX = 0.5 (net) when ny = NEAR_Y_NET
-    // courtX = 1.0 (baseline) when ny = NEAR_Y_BASELINE
-    const span = NEAR_Y_BASELINE - NEAR_Y_NET;
-    const courtX = 0.5 + 0.5 * (ny - NEAR_Y_NET) / span;
-    // canvas Y: flip so player's left (low video-X) → court top (y=0)
-    const courtY = 1.0 - nx;
+    // Depth: frame Y maps to canvas X
+    //   ny = NEAR_DEPTH_NET      → courtX = 0.5  (net)
+    //   ny = NEAR_DEPTH_BASELINE  → courtX = 1.0  (baseline)
+    const dSpan = NEAR_DEPTH_BASELINE - NEAR_DEPTH_NET;
+    const courtX = 0.5 + 0.5 * (ny - NEAR_DEPTH_NET) / dSpan;
+
+    // Width: frame X maps to canvas Y
+    //   nx = NEAR_WIDTH_MIN → courtY = 1.0 (bottom sideline)
+    //   nx = NEAR_WIDTH_MAX → courtY = 0.0 (top sideline)
+    // Near player's left in frame = bottom of canvas.
+    const wSpan = NEAR_WIDTH_MAX - NEAR_WIDTH_MIN;
+    const courtY = 1.0 - (nx - NEAR_WIDTH_MIN) / wSpan;
+
     return [
       Math.max(0.5, Math.min(1.0, courtX)),
       Math.max(0.0, Math.min(1.0, courtY)),
     ];
   }
 
+  // ── FAR player: occupies the left half of the canvas (courtX 0.0 → 0.5) ───
   if (courtSide === "far") {
-    // Far player: frame Y in [FAR_Y_BASELINE, FAR_Y_NET]
-    // courtX = 0.0 (baseline) when ny = FAR_Y_BASELINE
-    // courtX = 0.5 (net) when ny = FAR_Y_NET
-    const span = FAR_Y_NET - FAR_Y_BASELINE;
-    const courtX = 0.5 * (ny - FAR_Y_BASELINE) / span;
-    // canvas Y: far player is seen from opposite side, so do NOT flip X
-    const courtY = nx;
+    // Depth: frame Y maps to canvas X
+    //   ny = FAR_DEPTH_BASELINE → courtX = 0.0  (far baseline)
+    //   ny = FAR_DEPTH_NET       → courtX = 0.5  (net)
+    const dSpan = FAR_DEPTH_NET - FAR_DEPTH_BASELINE;
+    const courtX = 0.5 * (ny - FAR_DEPTH_BASELINE) / dSpan;
+
+    // Width: frame X maps to canvas Y
+    // Far player is seen from the opposite end, so X is NOT flipped.
+    //   nx = FAR_WIDTH_MIN → courtY = 0.0 (top sideline)
+    //   nx = FAR_WIDTH_MAX → courtY = 1.0 (bottom sideline)
+    const wSpan = FAR_WIDTH_MAX - FAR_WIDTH_MIN;
+    const courtY = (nx - FAR_WIDTH_MIN) / wSpan;
+
     return [
       Math.max(0.0, Math.min(0.5, courtX)),
       Math.max(0.0, Math.min(1.0, courtY)),
     ];
   }
 
-  // null = both players: generic mapping (less accurate)
+  // null = both players: generic mapping (less accurate, full normalised range)
   return [ny, 1.0 - nx];
 }
 
@@ -477,6 +507,8 @@ function drawHeatmap(
 // ── Component ─────────────────────────────────────────────────────────────────
 const DEFAULT_NEAR_COLOR = "#22c55e";
 const DEFAULT_FAR_COLOR  = "#3b82f6";
+const PAGE_SIZE = 5000;       // max the backend allows
+const PARALLEL_PAGES = 6;     // concurrent requests per batch
 
 export default function CourtHeatmap({
   runId,
@@ -494,6 +526,7 @@ export default function CourtHeatmap({
   const canvasRef        = useRef<HTMLCanvasElement>(null);
   const framesRef        = useRef<PoseFrame[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadProgress, setLoadProgress] = useState(0); // 0-100
 
   const currentTimeMsRef = useRef(currentTimeMs);
   const lastDrawnMsRef   = useRef(-1);
@@ -508,29 +541,64 @@ export default function CourtHeatmap({
     dataReadyRef.current   = false;
     lastDrawnMsRef.current = -1;
     framesRef.current      = [];
+    setLoadProgress(0);
 
     async function fetchAll() {
       setLoading(true);
-      const all: PoseFrame[] = [];
-      let offset = 0;
+
       try {
-        while (true) {
-          const result = await apiClient.getPoses(runId, {
-            ...(courtSide ? { court_side: courtSide } : {}),
-            limit: 1000,
-            offset,
-          });
-          if (cancelled) return;
-          all.push(...result.items);
-          if (!result.has_more) break;
-          offset += 1000;
+        // ── Step 1: fetch first page to discover the total count ──────────
+        const first = await apiClient.getPoses(runId, {
+          ...(courtSide ? { court_side: courtSide } : {}),
+          limit: PAGE_SIZE,
+          offset: 0,
+        });
+        if (cancelled) return;
+
+        const all: PoseFrame[] = [...first.items];
+        const total = first.total;
+        const totalPages = Math.ceil(total / PAGE_SIZE);
+        setLoadProgress(Math.round((1 / totalPages) * 100));
+
+        // ── Step 2: fetch remaining pages in parallel batches ─────────────
+        if (first.has_more) {
+          const offsets: number[] = [];
+          for (let page = 1; page < totalPages; page++) {
+            offsets.push(page * PAGE_SIZE);
+          }
+
+          // Fire PARALLEL_PAGES requests at once, then wait, repeat.
+          let done = 1;
+          for (let i = 0; i < offsets.length; i += PARALLEL_PAGES) {
+            if (cancelled) return;
+            const batch = offsets.slice(i, i + PARALLEL_PAGES);
+            const results = await Promise.all(
+              batch.map(offset =>
+                apiClient.getPoses(runId, {
+                  ...(courtSide ? { court_side: courtSide } : {}),
+                  limit: PAGE_SIZE,
+                  offset,
+                })
+              )
+            );
+            if (cancelled) return;
+            for (const r of results) {
+              all.push(...r.items);
+              done++;
+            }
+            setLoadProgress(Math.min(99, Math.round((done / totalPages) * 100)));
+          }
         }
-      } catch { /* non-fatal */ }
-      if (!cancelled) {
-        framesRef.current      = all;
-        dataReadyRef.current   = true;
-        lastDrawnMsRef.current = -1;
-        setLoading(false);
+
+        if (!cancelled) {
+          framesRef.current      = all;
+          dataReadyRef.current   = true;
+          lastDrawnMsRef.current = -1;
+          setLoadProgress(100);
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -561,14 +629,24 @@ export default function CourtHeatmap({
   return (
     <div className="relative w-full rounded-lg overflow-hidden bg-[#0e1a10]">
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/50 rounded-lg">
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/55 rounded-lg gap-2">
           <svg className="animate-spin h-5 w-5 text-green-400"
             xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-label="Loading">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
             <path className="opacity-75" fill="currentColor"
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
           </svg>
-          <span className="ml-2 text-xs text-gray-400">Loading…</span>
+          {loadProgress > 0 && loadProgress < 100 && (
+            <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-green-500 rounded-full transition-all duration-150"
+                style={{ width: `${loadProgress}%` }}
+              />
+            </div>
+          )}
+          <span className="text-xs text-gray-400">
+            {loadProgress > 0 && loadProgress < 100 ? `${loadProgress}%` : "Loading…"}
+          </span>
         </div>
       )}
       <canvas

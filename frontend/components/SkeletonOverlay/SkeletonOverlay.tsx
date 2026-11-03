@@ -106,7 +106,7 @@ export default function SkeletonOverlay({
       fetchingRef.current = true;
       try {
         let offset = 0;
-        const limit = 1000;
+        const limit = 5000;
         const newMap = new Map<number, PoseFrame[]>(framesRef.current);
 
         while (true) {

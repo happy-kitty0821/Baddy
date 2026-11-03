@@ -137,7 +137,7 @@ def list_poses(
     end_ms: int | None = Query(None),
     track_id: str | None = Query(None),
     court_side: str | None = Query(None, regex="^(near|far)$"),
-    limit: int = Query(500, ge=1, le=1000),
+    limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
 ) -> PoseFrameListResponse:
     _get_run_or_404(db, run_id)

@@ -213,7 +213,7 @@ async function getPoses(
   if (params?.end_ms != null) qs.set("end_ms", String(params.end_ms));
   if (params?.track_id) qs.set("track_id", params.track_id);
   if (params?.court_side) qs.set("court_side", params.court_side);
-  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.limit) qs.set("limit", String(Math.min(params.limit, 5000)));
   if (params?.offset) qs.set("offset", String(params.offset));
   const query = qs.toString() ? `?${qs.toString()}` : "";
   return apiFetch<PoseFrameListResponse>(`/analyses/${runId}/poses${query}`);

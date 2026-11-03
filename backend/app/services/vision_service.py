@@ -18,7 +18,8 @@ from app.models.user_correction import UserCorrection
 from app.schemas.vision import CorrectionCreate, PlayerIdentityUpdate
 
 # Hard cap on the number of pose frames returned per request.
-_MAX_POSE_LIMIT = 1000
+# Raised to 5000 so the heatmap can load in ~60 parallel requests instead of ~300.
+_MAX_POSE_LIMIT = 5000
 
 # Minimum number of pose frames a track must have to appear in the UI.
 # ByteTrack creates spurious short-lived IDs (1–2 frames) on every brief
