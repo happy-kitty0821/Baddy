@@ -69,7 +69,9 @@ interface CourtHeatmapProps {
   sourceWidth: number;
   sourceHeight: number;
   enabled: boolean;
-  currentTimeMs: number;
+  /** Returns the current video time in ms.  Called at 60fps by the rAF loop
+   *  so the heatmap follows the video at any playback speed. */
+  getTimeMs: () => number;
   playerLabel?: string;
   /** Colour of the live position dot and label chip only. Not the heat. */
   playerColor?: string;
@@ -356,11 +358,52 @@ function drawHeatmap(
   // Filter to current video time
   const visible = upToMs > 0 ? frames.filter(f => f.timestamp_ms <= upToMs) : frames;
 
-  // Track latest mapped position for the live dot
+  // ── Interpolated live dot position ────────────────────────────────────────
+  // Binary-search the full frames array (sorted by timestamp_ms asc from the
+  // API) for the two frames that bracket upToMs, then linearly interpolate
+  // the mapped court position between them.  This gives smooth dot movement
+  // at any playback speed (0.25x, 0.5x, etc.) instead of jumping every frame.
   let lastX = -1, lastY = -1;
-  const latestTs = visible.length > 0
-    ? visible.reduce((max, f) => f.timestamp_ms > max ? f.timestamp_ms : max, -1)
-    : -1;
+  if (upToMs > 0 && frames.length >= 2) {
+    // Binary search for the last frame with timestamp_ms <= upToMs.
+    let lo = 0, hi = frames.length - 1, prevIdx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (frames[mid].timestamp_ms <= upToMs) { prevIdx = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    const nextIdx = prevIdx >= 0 && prevIdx < frames.length - 1 ? prevIdx + 1 : -1;
+
+    if (prevIdx >= 0) {
+      const prevFrame = frames[prevIdx];
+      const prevMapped = prevFrame.bbox_x != null && prevFrame.bbox_y != null
+        ? mapToCourtXY(prevFrame.bbox_x, prevFrame.bbox_y, sw, sh, isPortrait, courtSide)
+        : null;
+
+      if (prevMapped && nextIdx >= 0) {
+        const nextFrame = frames[nextIdx];
+        const nextMapped = nextFrame.bbox_x != null && nextFrame.bbox_y != null
+          ? mapToCourtXY(nextFrame.bbox_x, nextFrame.bbox_y, sw, sh, isPortrait, courtSide)
+          : null;
+
+        if (nextMapped) {
+          // Interpolation factor between the two bracketing frames.
+          const span = nextFrame.timestamp_ms - prevFrame.timestamp_ms;
+          const t = span > 0
+            ? Math.max(0, Math.min(1, (upToMs - prevFrame.timestamp_ms) / span))
+            : 0;
+          lastX = prevMapped[0] + (nextMapped[0] - prevMapped[0]) * t;
+          lastY = prevMapped[1] + (nextMapped[1] - prevMapped[1]) * t;
+        } else if (prevMapped) {
+          lastX = prevMapped[0];
+          lastY = prevMapped[1];
+        }
+      } else if (prevMapped) {
+        lastX = prevMapped[0];
+        lastY = prevMapped[1];
+      }
+    }
+  }
 
   // Build hit-count grid
   const grid: number[][] = Array.from({length: ROWS}, () => new Array(COLS).fill(0));
@@ -372,7 +415,6 @@ function drawHeatmap(
     const col = Math.max(0, Math.min(COLS-1, Math.floor(cx * COLS)));
     const row = Math.max(0, Math.min(ROWS-1, Math.floor(cy * ROWS)));
     grid[row][col]++;
-    if (f.timestamp_ms === latestTs) { lastX = cx; lastY = cy; }
   }
 
   const smoothed = blurGrid(grid, ROWS, COLS);
@@ -516,7 +558,7 @@ export default function CourtHeatmap({
   sourceWidth,
   sourceHeight,
   enabled,
-  currentTimeMs,
+  getTimeMs,
   playerLabel = "",
   playerColor,
 }: CourtHeatmapProps) {
@@ -528,12 +570,14 @@ export default function CourtHeatmap({
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState(0); // 0-100
 
-  const currentTimeMsRef = useRef(currentTimeMs);
+  // Keep getTimeMs in a ref so the rAF loop always calls the latest version
+  // without needing to restart the loop on every re-render.
+  const getTimeMsRef     = useRef(getTimeMs);
+  useEffect(() => { getTimeMsRef.current = getTimeMs; }, [getTimeMs]);
+
   const lastDrawnMsRef   = useRef(-1);
   const rafRef           = useRef<number | null>(null);
   const dataReadyRef     = useRef(false);
-
-  currentTimeMsRef.current = currentTimeMs;
 
   useEffect(() => {
     if (!runId) return;
@@ -612,7 +656,9 @@ export default function CourtHeatmap({
       if (!dataReadyRef.current) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const upToMs = currentTimeMsRef.current;
+      // Read the exact video time at 60fps via the callback.
+      // This follows the video at any playback speed (0.25x–2x).
+      const upToMs = getTimeMsRef.current();
       if (upToMs === lastDrawnMsRef.current) return;
       lastDrawnMsRef.current = upToMs;
       drawHeatmap(

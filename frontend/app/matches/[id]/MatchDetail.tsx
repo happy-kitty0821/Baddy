@@ -52,12 +52,14 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [farColor,  setFarColor]  = useState("#3b82f6");
   const [nearLabel, setNearLabel] = useState("You");
   const [farLabel,  setFarLabel]  = useState("Opponent");
-  // Current video playback time in milliseconds — driven by VideoPlayer's
-  // onTimeUpdate callback and passed to CourtHeatmap for dynamic redraws.
-  const [videoTimeMs, setVideoTimeMs] = useState(0);
+  // Current video playback time — stored in a ref (not state) so it updates
+  // at 60fps via VideoPlayer's rAF loop without triggering React re-renders.
+  // The heatmap reads it via the getVideoTimeMs callback in its own rAF loop.
+  const videoTimeMsRef = useRef(0);
   const handleTimeUpdate = useCallback((currentTime: number) => {
-    setVideoTimeMs(Math.round(currentTime * 1000));
+    videoTimeMsRef.current = Math.round(currentTime * 1000);
   }, []);
+  const getVideoTimeMs = useCallback(() => videoTimeMsRef.current, []);
   // Store the overlay renderer in a ref (not state) to avoid React treating
   // the function as an updater when passed to useState.
   const overlayRendererRef = useRef<((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null>(null);  const [renderTick, setRenderTick] = useState(0);
@@ -319,7 +321,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                     sourceWidth={match.width || 1920}
                     sourceHeight={match.height || 1080}
                     enabled={true}
-                    currentTimeMs={videoTimeMs}
+                    getTimeMs={getVideoTimeMs}
                     playerLabel={nearLabel}
                     playerColor={nearColor}
                   />
@@ -334,7 +336,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                     sourceWidth={match.width || 1920}
                     sourceHeight={match.height || 1080}
                     enabled={true}
-                    currentTimeMs={videoTimeMs}
+                    getTimeMs={getVideoTimeMs}
                     playerLabel={farLabel}
                     playerColor={farColor}
                   />

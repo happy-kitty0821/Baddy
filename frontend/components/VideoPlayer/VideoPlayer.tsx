@@ -64,6 +64,13 @@ export default function VideoPlayer({
     renderOverlayRef.current = renderOverlay;
   }, [renderOverlay]);
 
+  // Keep onTimeUpdateRef up to date so the rAF loop always calls the latest
+  // callback without needing to restart the loop on every re-render.
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  useEffect(() => {
+    onTimeUpdateRef.current = onTimeUpdate;
+  }, [onTimeUpdate]);
+
   // ── rAF draw loop ────────────────────────────────────────────────────────
   // Runs at ~60fps.  Reads video.currentTime directly (not from React state)
   // so it is always accurate regardless of playback speed.
@@ -87,6 +94,13 @@ export default function VideoPlayer({
       if (!ctx) return;
 
       const t = video.currentTime;
+
+      // Notify the heatmap of the exact video time at 60fps so it can follow
+      // the video at any playback speed (0.25x, 0.5x, 1x, 2x, etc.).
+      // This fires on EVERY rAF frame, before the skip-draw check below, so
+      // the heatmap always sees the freshest time even if this canvas draw
+      // is skipped because the video time barely changed.
+      onTimeUpdateRef.current?.(t);
 
       // Skip drawing if the video time hasn't changed (paused / no new frame).
       // Use a threshold of half a frame at 60fps (8ms) to avoid skipping when
@@ -125,12 +139,12 @@ export default function VideoPlayer({
     lastDrawnTimeRef.current = -1;
   }, [renderOverlay]);
 
-  // timeupdate: only used for the seek bar and the onTimeUpdate callback.
-  // Do NOT drive the draw loop from here.
+  // timeupdate: only used for the seek bar.
+  // The onTimeUpdate callback is driven by the rAF loop (60fps) below so the
+  // heatmap follows the exact video time at any playback speed (0.25x–2x).
   const handleTimeUpdate = useCallback(() => {
     const t = videoRef.current?.currentTime ?? 0;
     setCurrentTime(t);
-    onTimeUpdate?.(t);
   }, [onTimeUpdate]);
 
   const handleLoadedMetadata = useCallback(() => {
