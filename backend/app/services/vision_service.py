@@ -231,42 +231,36 @@ def query_poses(
         # Per-frame court half using the source dimensions stored on each frame.
         #
         # Landscape (source_width > source_height):
-        #   Split on Y axis.  Near end = bottom half (bbox_y + bbox_h/2 >= source_height/2).
+        #   Split on Y axis.  Near end = bottom half (bbox_y >= source_height/2).
         #   Far end  = top half.
         #
         # Portrait (source_height > source_width, e.g. 608×1080 phone recording):
         #   Split on X axis.  Near end = right half (bbox_x >= source_width/2).
         #   Far end  = left half.
         #
-        # We use the per-frame source dimensions (not a passed-in parameter) so
-        # mixed-orientation videos work correctly.
-        from sqlalchemy import case  # noqa: PLC0415
+        # We use the per-frame source dimensions so mixed-orientation videos
+        # work correctly.  Uses or_/and_ instead of case() for portability.
+        from sqlalchemy import and_, or_  # noqa: PLC0415
 
         is_portrait = PoseFrame.source_height > PoseFrame.source_width
-
-        # Centre coordinates.
-        bbox_cx = PoseFrame.bbox_x  # Ultralytics xywh stores centre already
-        bbox_cy = PoseFrame.bbox_y
-
         half_x = PoseFrame.source_width  / 2.0
         half_y = PoseFrame.source_height / 2.0
 
-        # For each frame choose the correct axis based on its own orientation.
-        # Landscape → Y-axis split; portrait → X-axis split.
+        # bbox_x / bbox_y are the CENTRE (Ultralytics xywh), no +h/2 needed.
         if court_side == "near":
             # Near: bottom half (landscape) OR right half (portrait)
             query = query.filter(
-                case(
-                    (is_portrait, bbox_cx >= half_x),
-                    else_=bbox_cy >= half_y,
+                or_(
+                    and_(is_portrait, PoseFrame.bbox_x >= half_x),
+                    and_(~is_portrait, PoseFrame.bbox_y >= half_y),
                 )
             )
         elif court_side == "far":
             # Far: top half (landscape) OR left half (portrait)
             query = query.filter(
-                case(
-                    (is_portrait, bbox_cx < half_x),
-                    else_=bbox_cy < half_y,
+                or_(
+                    and_(is_portrait, PoseFrame.bbox_x < half_x),
+                    and_(~is_portrait, PoseFrame.bbox_y < half_y),
                 )
             )
 
