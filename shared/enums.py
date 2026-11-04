@@ -72,4 +72,5 @@ class VisionStage(str, Enum):
     DETECT_PLAYERS = "detect_players"
     TRACK_AND_POSE = "track_and_pose"
     SAVE_RESULTS = "save_results"
+    TRACK_SHUTTLE = "track_shuttle"
     FINALIZE = "finalize"

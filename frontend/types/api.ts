@@ -166,3 +166,27 @@ export interface CourtHalfAssignment {
   axis: "y" | "x";
   ambiguous: boolean;
 }
+
+// ── Phase 4: Shuttle Tracking ─────────────────────────────────────────────
+
+export interface ShuttleObservation {
+  id: string;
+  analysis_run_id: string;
+  timestamp_ms: number;
+  frame_index: number;
+  x: number | null;
+  y: number | null;
+  confidence: number | null;
+  observation_status: "detected" | "interpolated" | "unavailable";
+  source_width: number;
+  source_height: number;
+  created_at: string;
+}
+
+export interface ShuttleObservationListResponse {
+  items: ShuttleObservation[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+}

@@ -125,6 +125,12 @@ class Settings(BaseSettings):
     # Frames below this are ghost detections (partial body outside frame, etc.).
     vision_min_pose_conf: float = 0.20
 
+    # ── Shuttle tracking (Phase 4) ─────────────────────────────────────────
+    shuttle_tracking_enabled: bool = True
+    shuttle_confidence_threshold: float = 0.5
+    # shuttle always processes every frame (3-frame window needs consecutive frames)
+    shuttle_target_fps: int = 30
+
     # ── FFmpeg / ffprobe location ──────────────────────────────────────────
     # Optional: set to the directory that contains ffmpeg.exe and ffprobe.exe
     # (or the binary symlinks on Linux).  Useful when the Celery worker process

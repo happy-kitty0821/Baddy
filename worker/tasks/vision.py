@@ -66,6 +66,77 @@ def _resolve_device(device: str) -> str:
     return "cpu"
 
 
+def _interpolate_shuttle_gaps(db, run_id: str, max_gap_frames: int = 3) -> None:
+    """
+    Fill short unavailable gaps between detected shuttle observations.
+
+    Walks all shuttle_observation rows for the run (ordered by frame_index).
+    When a run of "unavailable" rows of length 1..max_gap_frames lies between
+    two "detected" rows, linearly interpolates x and y by timestamp_ms and
+    sets observation_status="interpolated".  Longer gaps are left as-is.
+    Commits once after the pass.
+    """
+    try:
+        from app.models.shuttle_observation import ShuttleObservation  # noqa: PLC0415
+
+        rows = (
+            db.query(ShuttleObservation)
+            .filter(ShuttleObservation.analysis_run_id == run_id)
+            .order_by(ShuttleObservation.frame_index.asc())
+            .all()
+        )
+
+        if len(rows) < 3:
+            return
+
+        # Walk rows, tracking the last "detected" observation and accumulating
+        # runs of "unavailable" rows between detected observations.
+        last_detected_idx: int = -1  # index in `rows` of the last detected obs
+        unavail_run: list[int] = []  # indices of current unavailable run
+
+        changed = False
+
+        for i, row in enumerate(rows):
+            if row.observation_status == "detected" and row.x is not None and row.y is not None:
+                if unavail_run and last_detected_idx >= 0:
+                    gap_len = len(unavail_run)
+                    if 1 <= gap_len <= max_gap_frames:
+                        prev = rows[last_detected_idx]
+                        nxt = row
+                        ts_prev = prev.timestamp_ms
+                        ts_next = nxt.timestamp_ms
+                        ts_span = ts_next - ts_prev
+                        if ts_span > 0:
+                            for gap_row_idx in unavail_run:
+                                gap_row = rows[gap_row_idx]
+                                t = (gap_row.timestamp_ms - ts_prev) / ts_span
+                                t = max(0.0, min(1.0, t))
+                                gap_row.x = prev.x + (nxt.x - prev.x) * t  # type: ignore[operator]
+                                gap_row.y = prev.y + (nxt.y - prev.y) * t  # type: ignore[operator]
+                                gap_row.confidence = None
+                                gap_row.observation_status = "interpolated"
+                                changed = True
+
+                last_detected_idx = i
+                unavail_run = []
+            elif row.observation_status == "unavailable":
+                unavail_run.append(i)
+            else:
+                # "interpolated" rows from a previous run — reset the gap run
+                # but don't update last_detected_idx (we only anchor on "detected").
+                unavail_run = []
+
+        if changed:
+            db.commit()
+            logger.debug("Shuttle gap interpolation complete for run=%s", run_id)
+
+    except Exception as exc:
+        logger.warning(
+            "Shuttle gap interpolation failed for run %s (non-fatal): %s",
+            run_id, str(exc)[:300],
+        )
+
+
 def _compute_frame_skip(source_fps: float, target_fps: int) -> int:
     """
     Compute the frame skip divisor from the source fps and target fps.
@@ -84,6 +155,7 @@ def run_vision_sync(
     match_id: str,
     storage=None,
     adapter=None,
+    shuttle_adapter=None,
 ) -> None:
     """
     Synchronous vision pipeline — callable from tests without Celery.
@@ -94,6 +166,10 @@ def run_vision_sync(
       storage: Optional LocalFileStorage instance (for test injection).
       adapter: Optional ModelAdapter instance (for test injection / mocking).
                If None, a real YoloPoseAdapter is created and loaded.
+      shuttle_adapter: Optional shuttle adapter instance (for test injection).
+                       If None and shuttle_tracking_enabled=True, a real
+                       TrackNetV2Adapter is constructed.  Pass a mock or set
+                       shuttle_tracking_enabled=False to skip in tests.
 
     Heavy dependencies are imported lazily inside the function body.
     """
@@ -409,10 +485,141 @@ def run_vision_sync(
                 len(keep_ids), keep_ids,
             )
 
+        # ── Step 5c: Shuttle tracking (Phase 4) ──────────────────────────────
+        update_run_progress(db, run, 80, VisionStage.TRACK_SHUTTLE.value)
+        shuttle_model_id = None
+
+        if settings.shuttle_tracking_enabled or shuttle_adapter is not None:
+            try:
+                from app.models.shuttle_observation import ShuttleObservation  # noqa: PLC0415
+
+                _shuttle_adapter = shuttle_adapter
+                _shuttle_loaded = False
+
+                if _shuttle_adapter is None:
+                    from worker.models.tracknet_v2 import TrackNetV2Adapter  # noqa: PLC0415
+                    _shuttle_adapter = TrackNetV2Adapter(
+                        weights_dir=settings.model_weights_dir
+                    )
+
+                if not hasattr(_shuttle_adapter, "_already_loaded"):
+                    try:
+                        _shuttle_adapter.load(device)
+                        _shuttle_loaded = True
+                    except Exception as _load_exc:
+                        raise _load_exc
+
+                if device == "cpu":
+                    logger.warning(
+                        "Shuttle tracking on CPU — this will be slow but will complete."
+                    )
+
+                src_w = match.width or 1920
+                src_h = match.height or 1080
+
+                shuttle_batch: list = []
+
+                for (
+                    s_frame_index,
+                    _s_frame,
+                    s_ts,
+                    s_x,
+                    s_y,
+                    s_conf,
+                ) in _shuttle_adapter.infer_video(
+                    video_path=str(video_path),
+                    frame_skip=1,
+                    confidence_threshold=settings.shuttle_confidence_threshold,
+                    device=device,
+                ):
+                    # Cancellation check every 50 frames
+                    if (s_frame_index + 1) % 50 == 0:
+                        db.expire(run)
+                        db.refresh(run)
+                        if run.status == AnalysisStatus.CANCELLED.value:
+                            logger.info(
+                                "Shuttle tracking cancelled: run=%s after frame %d",
+                                run_id, s_frame_index,
+                            )
+                            try:
+                                if _shuttle_loaded:
+                                    _shuttle_adapter.unload()
+                            except Exception:
+                                pass
+                            db.commit()
+                            _reached_terminal = True
+                            return
+
+                    obs_status = "detected" if s_x is not None else "unavailable"
+                    obs = ShuttleObservation(
+                        analysis_run_id=run_id,
+                        timestamp_ms=s_ts,
+                        frame_index=s_frame_index,
+                        x=s_x,
+                        y=s_y,
+                        confidence=s_conf,
+                        observation_status=obs_status,
+                        source_width=src_w,
+                        source_height=src_h,
+                    )
+                    shuttle_batch.append(obs)
+
+                    # Batch commit every 100 frames
+                    if len(shuttle_batch) >= 100:
+                        db.add_all(shuttle_batch)
+                        db.commit()
+                        shuttle_batch.clear()
+
+                    # Progress 80→95
+                    if match.duration_ms and match.duration_ms > 0:
+                        pct = 80 + int(15 * min(1.0, s_ts / match.duration_ms))
+                        update_run_progress(
+                            db, run, min(pct, 94), VisionStage.TRACK_SHUTTLE.value
+                        )
+
+                # Flush remaining batch
+                if shuttle_batch:
+                    db.add_all(shuttle_batch)
+                    db.commit()
+                    shuttle_batch.clear()
+
+                if _shuttle_loaded:
+                    try:
+                        _shuttle_adapter.unload()
+                    except Exception:
+                        pass
+
+                # Gap interpolation (≤3 consecutive unavailable frames)
+                _interpolate_shuttle_gaps(db, run_id, max_gap_frames=3)
+
+                update_run_progress(db, run, 95, VisionStage.TRACK_SHUTTLE.value)
+                shuttle_model_id = "tracknet_v2"
+                logger.info("Shuttle tracking complete for run=%s", run_id)
+
+            except Exception as shuttle_exc:
+                # GRACEFUL: shuttle failure NEVER fails the run (spec §17).
+                logger.warning(
+                    "Shuttle tracking failed for run %s — run will still complete: %s",
+                    run_id, str(shuttle_exc)[:500],
+                )
+                try:
+                    if "_shuttle_adapter" in dir() and _shuttle_loaded:  # type: ignore[name-defined]
+                        _shuttle_adapter.unload()  # type: ignore[name-defined]
+                except Exception:
+                    pass
+        else:
+            logger.info("Shuttle tracking disabled — skipping stage.")
+
         # ── Step 6: Finalize ────────────────────────────────────────────────
         update_run_progress(db, run, 95, VisionStage.FINALIZE.value)
 
         # Update the pipeline_config with the actual settings used.
+        shuttle_info: dict = {}
+        if shuttle_model_id:
+            shuttle_info = {
+                "shuttle_model_id": shuttle_model_id,
+                "shuttle_confidence_threshold": settings.shuttle_confidence_threshold,
+            }
         run.pipeline_config = json.dumps({
             "frame_skip": frame_skip,
             "source_fps": source_fps,
@@ -421,6 +628,7 @@ def run_vision_sync(
             "confidence": settings.vision_confidence,
             "img_size": settings.vision_img_size,
             "model_id": "yolo11n-pose",
+            **shuttle_info,
         })
         db.commit()
 

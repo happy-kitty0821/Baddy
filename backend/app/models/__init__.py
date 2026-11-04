@@ -10,6 +10,7 @@ from app.models.analysis_run import AnalysisRun
 from app.models.player_track import PlayerTrack
 from app.models.pose_frame import PoseFrame
 from app.models.user_correction import UserCorrection
+from app.models.shuttle_observation import ShuttleObservation
 
 __all__ = [
     "Match",
@@ -18,4 +19,5 @@ __all__ = [
     "PlayerTrack",
     "PoseFrame",
     "UserCorrection",
+    "ShuttleObservation",
 ]

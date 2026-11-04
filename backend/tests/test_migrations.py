@@ -79,7 +79,7 @@ class TestAlembicMigrations:
         assert "analysis_runs" not in tables
 
     def test_revision_is_0002(self, disposable_db):
-        """After upgrade head, alembic_version must be 0002."""
+        """After upgrade head, alembic_version must be 0003 (current head)."""
         db_path, db_url = disposable_db
         _run_alembic("upgrade head", db_url, cwd=_BACKEND_DIR)
         conn = sqlite3.connect(db_path)
@@ -88,7 +88,7 @@ class TestAlembicMigrations:
         row = cur.fetchone()
         conn.close()
         assert row is not None
-        assert row[0] == "0002"
+        assert row[0] == "0003"
 
     def test_shared_importable_without_pythonpath(self, disposable_db):
         """
@@ -125,6 +125,8 @@ def _assert_schema(db_path: Path) -> None:
     assert "player_tracks" in tables, f"player_tracks table missing; tables: {tables}"
     assert "pose_frames" in tables, f"pose_frames table missing; tables: {tables}"
     assert "user_corrections" in tables, f"user_corrections table missing; tables: {tables}"
+    # Phase 4 shuttle tracking table.
+    assert "shuttle_observations" in tables, f"shuttle_observations table missing; tables: {tables}"
 
     cur.execute("SELECT name FROM sqlite_master WHERE type='index'")
     indexes = {r[0] for r in cur.fetchall()}
@@ -141,5 +143,12 @@ def _assert_schema(db_path: Path) -> None:
     )
     assert "ix_pose_frames_track_frame" in indexes, (
         f"composite index ix_pose_frames_track_frame missing; indexes: {indexes}"
+    )
+    # Phase 4 shuttle indexes.
+    assert "ix_shuttle_observations_analysis_run_id" in indexes, (
+        f"ix_shuttle_observations_analysis_run_id missing; indexes: {indexes}"
+    )
+    assert "ix_shuttle_observations_run_time" in indexes, (
+        f"composite index ix_shuttle_observations_run_time missing; indexes: {indexes}"
     )
     conn.close()

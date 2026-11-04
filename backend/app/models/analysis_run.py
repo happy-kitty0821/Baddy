@@ -79,6 +79,9 @@ class AnalysisRun(Base):
     user_corrections: Mapped[list["UserCorrection"]] = relationship(  # noqa: F821
         "UserCorrection", back_populates="analysis_run", cascade="all, delete-orphan"
     )
+    shuttle_observations: Mapped[list["ShuttleObservation"]] = relationship(  # noqa: F821
+        "ShuttleObservation", back_populates="analysis_run", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return (

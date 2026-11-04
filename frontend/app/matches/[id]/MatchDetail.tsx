@@ -3,16 +3,18 @@
  *
  * Phase 1: video playback + match metadata + processing status.
  * Phase 2: player detection/pose analysis trigger + skeleton overlay + player identity.
+ * Phase 4: shuttlecock tracking overlay.
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AnalysisRunRead, MatchRead } from "@/types/api";
 import apiClient from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer/VideoPlayer";
 import ProcessingStatus from "@/components/ProcessingStatus/ProcessingStatus";
 import SkeletonOverlay from "@/components/SkeletonOverlay/SkeletonOverlay";
+import ShuttleOverlay from "@/components/ShuttleOverlay/ShuttleOverlay";
 import PlayerPanel from "@/components/PlayerPanel/PlayerPanel";
 import CourtHeatmap from "@/components/CourtHeatmap/CourtHeatmap";
 import {
@@ -52,6 +54,10 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const [farColor,  setFarColor]  = useState("#3b82f6");
   const [nearLabel, setNearLabel] = useState("You");
   const [farLabel,  setFarLabel]  = useState("Opponent");
+
+  // Phase 4 state.
+  const [showShuttle, setShowShuttle] = useState(true);
+
   // Current video playback time — stored in a ref (not state) so it updates
   // at 60fps via VideoPlayer's rAF loop without triggering React re-renders.
   // The heatmap reads it via the getVideoTimeMs callback in its own rAF loop.
@@ -60,15 +66,31 @@ export default function MatchDetail({ id }: MatchDetailProps) {
     videoTimeMsRef.current = Math.round(currentTime * 1000);
   }, []);
   const getVideoTimeMs = useCallback(() => videoTimeMsRef.current, []);
-  // Store the overlay renderer in a ref (not state) to avoid React treating
-  // the function as an updater when passed to useState.
-  const overlayRendererRef = useRef<((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null>(null);  const [renderTick, setRenderTick] = useState(0);
-  const setOverlayRenderer = useCallback(
-    (fn: ((ctx: CanvasRenderingContext2D, currentTime: number) => void) | null) => {
-      overlayRendererRef.current = fn;
-      setRenderTick((n) => n + 1);
+
+  // ── Combined overlay renderer registry ────────────────────────────────────
+  // Each overlay registers itself via setRenderer(key, fn). The combinedRenderer
+  // clears once per frame, then calls skeleton then shuttle in order.
+  type Renderer = (ctx: CanvasRenderingContext2D, t: number) => void;
+  const renderersRef = useRef<Record<string, Renderer | null>>({});
+  const [rendererVersion, setRendererVersion] = useState(0);
+
+  const setRenderer = useCallback((key: string, fn: Renderer | null) => {
+    renderersRef.current = { ...renderersRef.current, [key]: fn };
+    setRendererVersion((v) => v + 1);
+  }, []);
+
+  const combinedRenderer = useMemo<Renderer>(
+    () => (ctx, t) => {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      const sk = renderersRef.current["skeleton"];
+      if (sk) sk(ctx, t);
+      const sh = renderersRef.current["shuttle"];
+      if (sh) sh(ctx, t);
     },
-    []
+    // rendererVersion bumps whenever a child registers/unregisters, forcing
+    // VideoPlayer to notice the change and trigger a redraw even when paused.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rendererVersion]
   );
 
   useEffect(() => {
@@ -224,7 +246,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
             <>
               <VideoPlayer
                 assetId={match.source_asset_id}
-                renderOverlay={overlayRendererRef.current ?? undefined}
+                renderOverlay={combinedRenderer}
                 onTimeUpdate={handleTimeUpdate}
               />
 
@@ -241,7 +263,18 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                   farColor={farColor}
                   nearLabel={nearLabel}
                   farLabel={farLabel}
-                  onRendererReady={setOverlayRenderer}
+                  onRendererReady={(fn) => setRenderer("skeleton", fn)}
+                />
+              )}
+
+              {showShuttle && hasVisionResults && latestRun && (
+                <ShuttleOverlay
+                  runId={latestRun.id}
+                  enabled={showShuttle}
+                  trailLength={15}
+                  sourceWidth={match.width || 1920}
+                  sourceHeight={match.height || 1080}
+                  onRendererReady={(fn) => setRenderer("shuttle", fn)}
                 />
               )}
 
@@ -263,6 +296,13 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                     onChange={e => setShowTrackIds(e.target.checked)} className="accent-green-500" />
                   IDs
                 </label>
+                {hasVisionResults && (
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" checked={showShuttle}
+                      onChange={e => setShowShuttle(e.target.checked)} className="accent-yellow-400" />
+                    Shuttle
+                  </label>
+                )}
                 {selectedCourtSide && (
                   <button onClick={() => setSelectedCourtSide(null)}
                     className="ml-auto text-[10px] rounded border border-gray-700 px-2 py-0.5 text-gray-500 hover:text-gray-300 hover:border-gray-500 transition-colors">
@@ -484,7 +524,6 @@ export default function MatchDetail({ id }: MatchDetailProps) {
             <p className="text-[10px] text-gray-600 font-medium uppercase tracking-wide mb-2">Coming next</p>
             <div className="space-y-1.5">
               {[
-                ["🏸", "Shuttle Tracking",    "Phase 4"],
                 ["📊", "Shot Timeline",       "Phase 5"],
                 ["🎯", "Coaching Analytics",  "Phase 6"],
               ].map(([icon, title, phase]) => (

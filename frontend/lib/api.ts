@@ -21,6 +21,7 @@ import type {
   PlayerIdentityUpdate,
   PlayerTrack,
   PoseFrameListResponse,
+  ShuttleObservationListResponse,
   TokenResponse,
   UserRead,
   VisionCreate,
@@ -242,6 +243,26 @@ async function assignCourtHalves(
   );
 }
 
+// ── Shuttle tracking (Phase 4) ────────────────────────────────────────────────
+
+async function getShuttle(
+  runId: string,
+  params?: {
+    start_ms?: number;
+    end_ms?: number;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<ShuttleObservationListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.start_ms != null) qs.set("start_ms", String(params.start_ms));
+  if (params?.end_ms != null) qs.set("end_ms", String(params.end_ms));
+  if (params?.limit) qs.set("limit", String(Math.min(params.limit, 5000)));
+  if (params?.offset) qs.set("offset", String(params.offset));
+  const query = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch<ShuttleObservationListResponse>(`/analyses/${runId}/shuttle${query}`);
+}
+
 function getAssetStreamUrlWithToken(assetId: string): string {
   // For use in <video src="..."> where we can't set headers.
   // The backend must accept the token as a query param too (Phase 2).
@@ -282,6 +303,8 @@ const apiClient = {
   getPoses,
   updatePlayerIdentity,
   assignCourtHalves,
+  // shuttle tracking (Phase 4)
+  getShuttle,
 };
 
 export default apiClient;
