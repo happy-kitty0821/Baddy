@@ -136,7 +136,14 @@ def detect_court_keypoints(
         homography = M.tolist()
 
     # ── Step 5: Confidence ────────────────────────────────────────────────
-    confidence = min(1.0, len(intersections) / 12.0)
+    # If we found a clean quad from colour segmentation, that's high confidence.
+    # If we used Hough fallback, confidence scales with intersection count.
+    if len(corners) == 4 and len(intersections) <= 4:
+        # Came from the colour-threshold quad path — that's reliable
+        confidence = 0.85
+    else:
+        # Hough path: scale by how many of the ~12 expected intersections we found
+        confidence = min(1.0, len(intersections) / 12.0)
 
     return CourtDetectionResult(
         corners=corners,

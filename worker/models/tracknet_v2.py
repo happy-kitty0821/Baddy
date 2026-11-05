@@ -36,7 +36,7 @@ MODEL_ID = "tracknet_v2"
 TRACKNET_V2_WEIGHTS_FILENAME = "tracknet_v2_best.pt"
 TRACKNET_V2_WEIGHTS_URL = (
     "https://github.com/AnInsomniacy/tracknet-series-pytorch"
-    "/releases/download/v2.0.0/tracknet_v2_best.pt"
+    "/releases/download/model-v2.0.0/tracknet_v2_best.pt"
 )
 # TODO: set TRACKNET_V2_SHA256 once the hash is known (one-line change to verify).
 TRACKNET_V2_SHA256: Optional[str] = None
