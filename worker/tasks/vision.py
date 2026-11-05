@@ -66,6 +66,116 @@ def _resolve_device(device: str) -> str:
     return "cpu"
 
 
+def _find_active_calibration(calibration_rows, timestamp_ms):
+    """
+    Binary-search calibration_rows (sorted by timestamp_ms asc) for the last
+    row with timestamp_ms <= target.  Returns None if the list is empty.
+    """
+    if not calibration_rows:
+        return None
+    lo, hi, result = 0, len(calibration_rows) - 1, None
+    while lo <= hi:
+        mid = (lo + hi) >> 1
+        if calibration_rows[mid].timestamp_ms <= timestamp_ms:
+            result = calibration_rows[mid]
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return result
+
+
+def _run_court_calibration(
+    video_path,
+    source_fps: float,
+    source_w: int,
+    source_h: int,
+    run_id: str,
+    db,
+) -> list:
+    """
+    Sample one frame every court_calibration_interval_s seconds, detect the
+    court corners, and persist CourtCalibration rows to the database.
+
+    Returns the list of saved CourtCalibration rows.
+    Wrapped in try/except — failures are logged but NEVER propagate.
+    """
+    try:
+        import cv2  # noqa: PLC0415
+        from app.config import settings  # noqa: PLC0415
+        from app.models.court_calibration import CourtCalibration  # noqa: PLC0415
+        from worker.models.court_detector import (  # noqa: PLC0415
+            detect_court_keypoints,
+            compute_drift,
+        )
+        import json  # noqa: PLC0415
+
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            logger.warning("Court calibration: could not open video %s", video_path)
+            return []
+
+        interval_s = settings.court_calibration_interval_s
+        min_conf = settings.court_min_confidence
+        drift_threshold = settings.court_drift_threshold_px
+
+        saved_rows: list = []
+        prev_corners: list = []
+        frame_index = 0
+        next_sample_time_s = 0.0
+
+        try:
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                current_time_s = frame_index / source_fps if source_fps > 0 else 0.0
+
+                if current_time_s >= next_sample_time_s:
+                    next_sample_time_s = current_time_s + interval_s
+                    timestamp_ms = int(current_time_s * 1000)
+
+                    result = detect_court_keypoints(frame, source_w, source_h)
+
+                    if result.confidence < min_conf:
+                        frame_index += 1
+                        continue
+
+                    drift = compute_drift(prev_corners, result.corners) if prev_corners else 0.0
+
+                    # Save if this is the first calibration OR drift exceeds threshold
+                    if not saved_rows or drift > drift_threshold:
+                        cal = CourtCalibration(
+                            analysis_run_id=run_id,
+                            timestamp_ms=timestamp_ms,
+                            frame_index=frame_index,
+                            corners_json=json.dumps(result.corners),
+                            homography_json=json.dumps(result.homography) if result.homography else json.dumps([]),
+                            drift_px=drift if saved_rows else None,
+                            confidence=result.confidence,
+                        )
+                        db.add(cal)
+                        saved_rows.append(cal)
+                        prev_corners = result.corners
+
+                frame_index += 1
+        finally:
+            cap.release()
+
+        if saved_rows:
+            db.commit()
+            # Refresh rows to populate server-default fields (created_at, id)
+            for row in saved_rows:
+                db.refresh(row)
+
+        return saved_rows
+
+    except Exception as exc:
+        logger.warning("Court calibration failed for run %s (non-fatal): %s", run_id, str(exc)[:500])
+        return []
+
+
 def _interpolate_shuttle_gaps(db, run_id: str, max_gap_frames: int = 3) -> None:
     """
     Fill short unavailable gaps between detected shuttle observations.
@@ -316,7 +426,26 @@ def run_vision_sync(
 
         update_run_progress(db, run, 10, VisionStage.DETECT_PLAYERS.value)
 
-        # ── Step 4: Run detection + tracking + pose ────────────────────────
+        # ── Step 4b: Court calibration (Phase 3) ──────────────────────────
+        calibration_rows = []
+        if settings.court_calibration_enabled:
+            try:
+                update_run_progress(db, run, 10, VisionStage.CALIBRATE_COURT.value)
+                calibration_rows = _run_court_calibration(
+                    video_path=video_path,
+                    source_fps=source_fps,
+                    source_w=match.width or 1920,
+                    source_h=match.height or 1080,
+                    run_id=run_id,
+                    db=db,
+                )
+                logger.info("Court calibration: %d segments saved", len(calibration_rows))
+            except Exception as exc:
+                logger.warning("Court calibration failed (non-fatal): %s", exc)
+
+        update_run_progress(db, run, 15, VisionStage.DETECT_PLAYERS.value)
+
+        # ── Step 4c: Run detection + tracking + pose ────────────────────────
         # Track which track_ids we've seen to create PlayerTrack rows.
         track_map: dict[int, PlayerTrack] = {}
         track_label_counter = 0
@@ -367,6 +496,17 @@ def run_vision_sync(
                     # visible keypoints and would pollute the overlay.
                     if det.keypoint_conf < settings.vision_min_pose_conf:
                         continue
+
+                    # Court boundary filter: skip detections outside the court
+                    # polygon (officials, spectators, etc.).
+                    if calibration_rows:
+                        active_cal = _find_active_calibration(calibration_rows, timestamp_ms)
+                        if active_cal is not None:
+                            import json as _json  # noqa: PLC0415
+                            from worker.models.court_detector import point_in_court as _pic  # noqa: PLC0415
+                            _corners = _json.loads(active_cal.corners_json)
+                            if _corners and not _pic(det.bbox[0], det.bbox[1], _corners):
+                                continue  # skip detections outside the court
 
                     # Create a PlayerTrack row if this is the first sighting.
                     if det.track_id not in track_map:

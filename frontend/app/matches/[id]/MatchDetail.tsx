@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AnalysisRunRead, MatchRead } from "@/types/api";
+import type { AnalysisRunRead, CourtCalibration, MatchRead } from "@/types/api";
 import apiClient from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer/VideoPlayer";
 import ProcessingStatus from "@/components/ProcessingStatus/ProcessingStatus";
@@ -58,6 +58,9 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   // Phase 4 state.
   const [showShuttle, setShowShuttle] = useState(true);
 
+  // Phase 3 state — court calibrations for homography-based heatmap.
+  const [courtCalibrations, setCourtCalibrations] = useState<CourtCalibration[]>([]);
+
   // Current video playback time — stored in a ref (not state) so it updates
   // at 60fps via VideoPlayer's rAF loop without triggering React re-renders.
   // The heatmap reads it via the getVideoTimeMs callback in its own rAF loop.
@@ -102,7 +105,15 @@ export default function MatchDetail({ id }: MatchDetailProps) {
         setMatch(m);
         try {
           const run = await apiClient.getLatestAnalysis(id);
-          if (!cancelled) setLatestRun(run);
+          if (!cancelled) {
+            setLatestRun(run);
+            // Fetch calibrations if vision results are available
+            if (run.status === "completed") {
+              apiClient.getCourtCalibrations(run.id)
+                .then(r => { if (!cancelled) setCourtCalibrations(r.items); })
+                .catch(() => {});
+            }
+          }
         } catch {
           // No run exists.
         }
@@ -115,6 +126,14 @@ export default function MatchDetail({ id }: MatchDetailProps) {
     load();
     return () => { cancelled = true; };
   }, [id]);
+
+  // Re-fetch calibrations when latestRun changes and vision results exist.
+  useEffect(() => {
+    if (!latestRun?.id || latestRun.status !== "completed") return;
+    apiClient.getCourtCalibrations(latestRun.id)
+      .then(r => setCourtCalibrations(r.items))
+      .catch(() => {});
+  }, [latestRun?.id]);
 
   const handleRunComplete = useCallback(async (run: AnalysisRunRead) => {
     setLatestRun(run);
@@ -364,6 +383,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                     getTimeMs={getVideoTimeMs}
                     playerLabel={nearLabel}
                     playerColor={nearColor}
+                    calibrations={courtCalibrations}
                   />
                 </div>
                 <div className="space-y-1">
@@ -379,6 +399,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                     getTimeMs={getVideoTimeMs}
                     playerLabel={farLabel}
                     playerColor={farColor}
+                    calibrations={courtCalibrations}
                   />
                 </div>
               </div>

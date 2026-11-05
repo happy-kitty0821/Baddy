@@ -190,3 +190,22 @@ export interface ShuttleObservationListResponse {
   limit: number;
   has_more: boolean;
 }
+
+// ── Phase 3: Court Calibration ────────────────────────────────────────────
+
+export interface CourtCalibration {
+  id: string;
+  analysis_run_id: string;
+  timestamp_ms: number;
+  frame_index: number;
+  corners_json: string;
+  homography_json: string;
+  drift_px: number | null;
+  confidence: number;
+  created_at: string;
+}
+
+export interface CourtCalibrationListResponse {
+  items: CourtCalibration[];
+  total: number;
+}

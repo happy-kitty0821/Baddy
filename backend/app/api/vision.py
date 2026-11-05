@@ -31,6 +31,7 @@ from app.schemas.vision import (
     VisionCreate,
 )
 from app.schemas.shuttle import ShuttleObservationListResponse, ShuttleObservationRead
+from app.schemas.court import CourtCalibrationListResponse, CourtCalibrationRead
 from app.services.job_service import get_run
 from app.services.vision_service import (
     assign_court_halves,
@@ -42,6 +43,7 @@ from app.services.vision_service import (
     update_player_identity,
 )
 from app.services.shuttle_service import query_shuttle
+from app.services.court_service import get_calibrations
 from shared.enums import AnalysisStatus, VisionStage
 
 router = APIRouter(prefix="/api/analyses", tags=["vision"])
@@ -197,6 +199,19 @@ def create_correction(
     _get_run_or_404(db, run_id)
     correction = save_correction(db, run_id, data)
     return CorrectionRead.model_validate(correction)
+
+
+@router.get("/{run_id}/court-calibrations", response_model=CourtCalibrationListResponse)
+def list_court_calibrations(
+    run_id: str,
+    db: DBSession,
+    current_user: CurrentUser,
+) -> CourtCalibrationListResponse:
+    """Return all court calibration rows for a run, ordered by timestamp_ms."""
+    _get_run_or_404(db, run_id)
+    items = get_calibrations(db, run_id)
+    read = [CourtCalibrationRead.model_validate(c) for c in items]
+    return CourtCalibrationListResponse(items=read, total=len(read))
 
 
 @router.get("/{run_id}/shuttle", response_model=ShuttleObservationListResponse)

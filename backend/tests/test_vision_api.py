@@ -274,10 +274,10 @@ def test_list_poses_pagination_and_filters(
 
 
 def test_list_poses_limit_clamped(client, auth_headers, completed_run, db_session):
-    """limit above 1000 is rejected by the query param validation (le=1000)."""
+    """limit above 5000 is rejected by the query param validation (le=5000)."""
     run_id = completed_run
     r = client.get(
-        f"/api/analyses/{run_id}/poses?limit=1001", headers=auth_headers
+        f"/api/analyses/{run_id}/poses?limit=5001", headers=auth_headers
     )
     assert r.status_code == 422  # Query param validation fails.
 

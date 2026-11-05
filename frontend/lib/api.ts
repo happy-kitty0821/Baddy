@@ -14,6 +14,8 @@
 import type {
   AnalysisRunRead,
   AssetRead,
+  CourtCalibration,
+  CourtCalibrationListResponse,
   CourtHalfAssignment,
   MatchCreate,
   MatchListResponse,
@@ -272,6 +274,12 @@ function getAssetStreamUrlWithToken(assetId: string): string {
   return `${API_BASE}/assets/${assetId}/stream`;
 }
 
+// ── Court calibration (Phase 3) ───────────────────────────────────────────────
+
+async function getCourtCalibrations(runId: string): Promise<CourtCalibrationListResponse> {
+  return apiFetch<CourtCalibrationListResponse>(`/analyses/${runId}/court-calibrations`);
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 const apiClient = {
@@ -305,6 +313,8 @@ const apiClient = {
   assignCourtHalves,
   // shuttle tracking (Phase 4)
   getShuttle,
+  // court calibration (Phase 3)
+  getCourtCalibrations,
 };
 
 export default apiClient;

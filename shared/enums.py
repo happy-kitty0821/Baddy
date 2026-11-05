@@ -73,4 +73,5 @@ class VisionStage(str, Enum):
     TRACK_AND_POSE = "track_and_pose"
     SAVE_RESULTS = "save_results"
     TRACK_SHUTTLE = "track_shuttle"
+    CALIBRATE_COURT = "calibrate_court"
     FINALIZE = "finalize"

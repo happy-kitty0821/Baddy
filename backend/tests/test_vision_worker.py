@@ -143,11 +143,17 @@ class TestDeviceResolution:
 # ── Vision pipeline (mocked) ───────────────────────────────────────────────
 
 @pytest.fixture()
-def vision_test_setup(db_session, test_storage, small_video):
+def vision_test_setup(db_session, test_storage, small_video, monkeypatch):
     """
     Create a match with a source video and a run in PROCESSING state
     (simulating what the API does when it dispatches vision).
+
+    Court calibration is disabled here because the test video has no real
+    court markings and cv2/numpy are not required for the core worker tests.
     """
+    from app.config import settings
+    monkeypatch.setattr(settings, "court_calibration_enabled", False)
+
     match = create_match(db_session, MatchCreate(title="Vision Worker Test"))
     with open(small_video, "rb") as f:
         store_upload(

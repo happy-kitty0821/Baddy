@@ -131,6 +131,12 @@ class Settings(BaseSettings):
     # shuttle always processes every frame (3-frame window needs consecutive frames)
     shuttle_target_fps: int = 30
 
+    # ── Court calibration (Phase 3) ────────────────────────────────────────
+    court_calibration_enabled: bool = True
+    court_calibration_interval_s: float = 1.0
+    court_drift_threshold_px: float = 15.0
+    court_min_confidence: float = 0.3
+
     # ── FFmpeg / ffprobe location ──────────────────────────────────────────
     # Optional: set to the directory that contains ffmpeg.exe and ffprobe.exe
     # (or the binary symlinks on Linux).  Useful when the Celery worker process

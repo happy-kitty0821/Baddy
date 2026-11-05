@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { PoseFrame } from "@/types/api";
+import type { CourtCalibration, PoseFrame } from "@/types/api";
 import apiClient from "@/lib/api";
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
@@ -75,6 +75,9 @@ interface CourtHeatmapProps {
   playerLabel?: string;
   /** Colour of the live position dot and label chip only. Not the heat. */
   playerColor?: string;
+  /** Court calibration rows from the backend (Phase 3). When provided,
+   *  homography is used for pixel-accurate court mapping. */
+  calibrations?: CourtCalibration[];
 }
 
 // ── Fixed thermal heat colour (blue → cyan → green → yellow → red) ───────────
@@ -112,6 +115,45 @@ function blurGrid(g: number[][], R: number, C: number): number[][] {
     }
   }
   return o;
+}
+
+// ── Homography helpers ────────────────────────────────────────────────────────
+
+/**
+ * Apply a 3×3 perspective matrix H to (x, y) in source pixels.
+ * Returns [courtX, courtY] clamped to [-0.1, 1.1].
+ */
+function applyHomography(H: number[][], x: number, y: number): [number, number] {
+  const denom = H[2][0] * x + H[2][1] * y + H[2][2];
+  if (Math.abs(denom) < 1e-10) return [0, 0];
+  const cx = (H[0][0] * x + H[0][1] * y + H[0][2]) / denom;
+  const cy = (H[1][0] * x + H[1][1] * y + H[1][2]) / denom;
+  return [
+    Math.max(-0.1, Math.min(1.1, cx)),
+    Math.max(-0.1, Math.min(1.1, cy)),
+  ];
+}
+
+/**
+ * Binary-search calibrations (sorted by timestamp_ms asc) for the last
+ * entry with timestamp_ms <= timestampMs.  Returns null if list is empty.
+ */
+function _findActiveCalibration(
+  calibrations: CourtCalibration[],
+  timestampMs: number,
+): CourtCalibration | null {
+  if (!calibrations.length) return null;
+  let lo = 0, hi = calibrations.length - 1, result: CourtCalibration | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (calibrations[mid].timestamp_ms <= timestampMs) {
+      result = calibrations[mid];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return result;
 }
 
 // ── Coordinate mapping ────────────────────────────────────────────────────────
@@ -346,6 +388,7 @@ function drawHeatmap(
   courtSide: "near" | "far" | null,
   playerLabel: string,
   playerColor: string,          // used for dot + label only
+  calibrations?: CourtCalibration[],
 ) {
   canvas.width  = CANVAS_W;
   canvas.height = CANVAS_H;
@@ -354,6 +397,28 @@ function drawHeatmap(
   if (!ctx) return;
 
   const isPortrait = sh > sw;
+
+  /**
+   * Map a bbox point to [courtX, courtY] in [0,1] space.
+   * Uses homography when a calibration is available for the frame's timestamp,
+   * falls back to mapToCourtXY otherwise.
+   */
+  function mapPoint(bboxX: number, bboxY: number, timestampMs: number): [number, number] | null {
+    if (calibrations && calibrations.length > 0) {
+      const cal = _findActiveCalibration(calibrations, timestampMs);
+      if (cal) {
+        try {
+          const H: number[][] = JSON.parse(cal.homography_json);
+          if (Array.isArray(H) && H.length === 3) {
+            return applyHomography(H, bboxX, bboxY);
+          }
+        } catch {
+          // fall through to legacy mapping
+        }
+      }
+    }
+    return mapToCourtXY(bboxX, bboxY, sw, sh, isPortrait, courtSide);
+  }
 
   // Filter to current video time
   const visible = upToMs > 0 ? frames.filter(f => f.timestamp_ms <= upToMs) : frames;
@@ -377,13 +442,13 @@ function drawHeatmap(
     if (prevIdx >= 0) {
       const prevFrame = frames[prevIdx];
       const prevMapped = prevFrame.bbox_x != null && prevFrame.bbox_y != null
-        ? mapToCourtXY(prevFrame.bbox_x, prevFrame.bbox_y, sw, sh, isPortrait, courtSide)
+        ? mapPoint(prevFrame.bbox_x, prevFrame.bbox_y, prevFrame.timestamp_ms)
         : null;
 
       if (prevMapped && nextIdx >= 0) {
         const nextFrame = frames[nextIdx];
         const nextMapped = nextFrame.bbox_x != null && nextFrame.bbox_y != null
-          ? mapToCourtXY(nextFrame.bbox_x, nextFrame.bbox_y, sw, sh, isPortrait, courtSide)
+          ? mapPoint(nextFrame.bbox_x, nextFrame.bbox_y, nextFrame.timestamp_ms)
           : null;
 
         if (nextMapped) {
@@ -409,7 +474,7 @@ function drawHeatmap(
   const grid: number[][] = Array.from({length: ROWS}, () => new Array(COLS).fill(0));
   for (const f of visible) {
     if (f.bbox_x == null || f.bbox_y == null) continue;
-    const mapped = mapToCourtXY(f.bbox_x, f.bbox_y, sw, sh, isPortrait, courtSide);
+    const mapped = mapPoint(f.bbox_x, f.bbox_y, f.timestamp_ms);
     if (!mapped) continue;
     const [cx, cy] = mapped;
     const col = Math.max(0, Math.min(COLS-1, Math.floor(cx * COLS)));
@@ -561,6 +626,7 @@ export default function CourtHeatmap({
   getTimeMs,
   playerLabel = "",
   playerColor,
+  calibrations,
 }: CourtHeatmapProps) {
   const dotColor = playerColor
     ?? (courtSide === "near" ? DEFAULT_NEAR_COLOR : DEFAULT_FAR_COLOR);
@@ -574,6 +640,11 @@ export default function CourtHeatmap({
   // without needing to restart the loop on every re-render.
   const getTimeMsRef     = useRef(getTimeMs);
   useEffect(() => { getTimeMsRef.current = getTimeMs; }, [getTimeMs]);
+
+  // Keep calibrations in a ref so the rAF loop always sees the latest data
+  // without restarting on every calibrations update.
+  const calibrationsRef  = useRef<CourtCalibration[] | undefined>(calibrations);
+  useEffect(() => { calibrationsRef.current = calibrations; }, [calibrations]);
 
   const lastDrawnMsRef   = useRef(-1);
   const rafRef           = useRef<number | null>(null);
@@ -665,6 +736,7 @@ export default function CourtHeatmap({
         canvas, framesRef.current, upToMs,
         sourceWidth, sourceHeight,
         courtSide, playerLabel, dotColor,
+        calibrationsRef.current,
       );
     }
     rafRef.current = requestAnimationFrame(loop);
