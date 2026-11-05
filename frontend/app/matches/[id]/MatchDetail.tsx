@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AnalysisRunRead, MatchRead } from "@/types/api";
 import apiClient from "@/lib/api";
@@ -68,30 +68,30 @@ export default function MatchDetail({ id }: MatchDetailProps) {
   const getVideoTimeMs = useCallback(() => videoTimeMsRef.current, []);
 
   // ── Combined overlay renderer registry ────────────────────────────────────
-  // Each overlay registers itself via setRenderer(key, fn). The combinedRenderer
-  // clears once per frame, then calls skeleton then shuttle in order.
+  // Each overlay registers itself via setSkeletonRenderer / setShuttleRenderer.
+  // All renderer state lives in refs — no React state — so registering a new
+  // renderer never triggers a re-render loop.
+  // VideoPlayer's rAF loop reads renderOverlayRef.current directly, so it
+  // always calls the latest combined renderer without any state bumps.
   type Renderer = (ctx: CanvasRenderingContext2D, t: number) => void;
-  const renderersRef = useRef<Record<string, Renderer | null>>({});
-  const [rendererVersion, setRendererVersion] = useState(0);
+  const skeletonRendererRef = useRef<Renderer | null>(null);
+  const shuttleRendererRef  = useRef<Renderer | null>(null);
 
-  const setRenderer = useCallback((key: string, fn: Renderer | null) => {
-    renderersRef.current = { ...renderersRef.current, [key]: fn };
-    setRendererVersion((v) => v + 1);
+  // The combined renderer is a stable function that reads from the refs each
+  // frame. It is created once (empty deps) and never recreated.
+  const combinedRenderer = useCallback<Renderer>((ctx, t) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    skeletonRendererRef.current?.(ctx, t);
+    shuttleRendererRef.current?.(ctx, t);
+  }, []); // stable — no deps, reads refs at call time
+
+  const setSkeletonRenderer = useCallback((fn: Renderer | null) => {
+    skeletonRendererRef.current = fn;
   }, []);
 
-  const combinedRenderer = useMemo<Renderer>(
-    () => (ctx, t) => {
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-      const sk = renderersRef.current["skeleton"];
-      if (sk) sk(ctx, t);
-      const sh = renderersRef.current["shuttle"];
-      if (sh) sh(ctx, t);
-    },
-    // rendererVersion bumps whenever a child registers/unregisters, forcing
-    // VideoPlayer to notice the change and trigger a redraw even when paused.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rendererVersion]
-  );
+  const setShuttleRenderer = useCallback((fn: Renderer | null) => {
+    shuttleRendererRef.current = fn;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -263,7 +263,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                   farColor={farColor}
                   nearLabel={nearLabel}
                   farLabel={farLabel}
-                  onRendererReady={(fn) => setRenderer("skeleton", fn)}
+                  onRendererReady={(fn) => setSkeletonRenderer(fn)}
                 />
               )}
 
@@ -274,7 +274,7 @@ export default function MatchDetail({ id }: MatchDetailProps) {
                   trailLength={15}
                   sourceWidth={match.width || 1920}
                   sourceHeight={match.height || 1080}
-                  onRendererReady={(fn) => setRenderer("shuttle", fn)}
+                  onRendererReady={(fn) => setShuttleRenderer(fn)}
                 />
               )}
 
