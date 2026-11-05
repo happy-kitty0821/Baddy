@@ -139,6 +139,10 @@ def _run_court_calibration(
                     result = detect_court_keypoints(frame, source_w, source_h)
 
                     if result.confidence < min_conf:
+                        logger.debug(
+                            "Court calibration: frame %d ts=%dms confidence=%.3f < min=%.3f — skipped",
+                            frame_index, timestamp_ms, result.confidence, min_conf,
+                        )
                         frame_index += 1
                         continue
 

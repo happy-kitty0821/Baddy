@@ -266,7 +266,10 @@ class TrackNetV2Adapter:
         raw = torch.load(str(weights_path), map_location="cpu")
         # Unwrap common checkpoint wrappers.
         if isinstance(raw, dict):
-            if "state_dict" in raw:
+            if "model_state_dict" in raw:
+                # Reference repo wraps the state dict under 'model_state_dict'
+                state_dict = raw["model_state_dict"]
+            elif "state_dict" in raw:
                 state_dict = raw["state_dict"]
             elif "model" in raw:
                 state_dict = raw["model"]
@@ -279,7 +282,10 @@ class TrackNetV2Adapter:
 
         try:
             model.load_state_dict(state_dict, strict=True)
-            logger.info("TrackNetV2: weights loaded (strict).")
+            logger.info(
+                "TrackNetV2: weights loaded (strict). Keys: %d. First key: %s",
+                len(state_dict), next(iter(state_dict), "none"),
+            )
         except RuntimeError as exc:
             logger.warning(
                 "TrackNetV2 strict load failed: %s\n"

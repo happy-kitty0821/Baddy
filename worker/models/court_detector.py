@@ -46,17 +46,18 @@ def detect_court_keypoints(
     # ── Step 1: Colour threshold ──────────────────────────────────────────
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Green court (H=35-85, S=40-255, V=40-255)
+    # Green court (H=25-95, S=30-255, V=30-255) — wider range covers
+    # bright lime, dark forest, and blue-green indoor court surfaces
     green_mask = cv2.inRange(
         hsv,
-        np.array([35, 40, 40]),
-        np.array([85, 255, 255]),
+        np.array([25, 30, 30]),
+        np.array([95, 255, 255]),
     )
-    # Blue court (H=100-130, S=50-255, V=50-255)
+    # Blue court (H=90-140, S=40-255, V=40-255)
     blue_mask = cv2.inRange(
         hsv,
-        np.array([100, 50, 50]),
-        np.array([130, 255, 255]),
+        np.array([90, 40, 40]),
+        np.array([140, 255, 255]),
     )
 
     # Use whichever mask has more non-zero pixels

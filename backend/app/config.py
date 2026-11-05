@@ -135,7 +135,7 @@ class Settings(BaseSettings):
     court_calibration_enabled: bool = True
     court_calibration_interval_s: float = 1.0
     court_drift_threshold_px: float = 15.0
-    court_min_confidence: float = 0.15  # 2+ intersections or colour-quad detection
+    court_min_confidence: float = 0.08  # accept as few as 1 intersection or any colour-quad
 
     # ── FFmpeg / ffprobe location ──────────────────────────────────────────
     # Optional: set to the directory that contains ffmpeg.exe and ffprobe.exe
