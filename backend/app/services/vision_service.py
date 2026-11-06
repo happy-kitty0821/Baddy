@@ -63,19 +63,16 @@ def assign_court_halves(db: Session, run_id: str, source_height: int, source_wid
     """
     Automatically assign Near-End and Far-End court positions to player tracks.
 
-    Orientation detection:
-      - Landscape (width > height, typical overhead/back-corner footage):
-        Split on Y axis. Near End = bottom half (Y >= 50%), Far End = top half.
-      - Portrait (height > width, e.g. phone recording, YouTube Short 9:16):
-        Split on X axis. Near End = right half (X >= 50%), Far End = left half.
-        Labels become "Left Side" / "Right Side" in the UI.
-
     Algorithm:
     1. Determine axis from source dimensions (Y for landscape, X for portrait).
-    2. For every qualifying track, compute the median centre on the chosen axis.
-    3. Partition tracks into two halves by the midpoint.
-    4. Pick the track with the most pose frames in each half as canonical.
-    5. Persist track_label and identity_note.
+    2. For every qualifying track, compute:
+       - The median centre on the chosen axis (depth position)
+       - The median bbox area (proxy for distance from camera)
+    3. Partition tracks into two halves by the midpoint of the chosen axis.
+    4. Within each half, pick the track with the LARGEST median bbox area.
+       Rationale: the near-end player has the biggest bbox (closest to camera);
+       the far-end player has the second biggest. Any surviving officials/judges
+       will have smaller bboxes than the actual players.
 
     Returns a dict:
       { "near_end": PlayerTrack | None, "far_end": PlayerTrack | None,
@@ -85,93 +82,87 @@ def assign_court_halves(db: Session, run_id: str, source_height: int, source_wid
     if not tracks:
         return {"near_end": None, "far_end": None, "axis": "y", "ambiguous": True}
 
-    # Choose axis from source dimensions.
-    # Portrait = height > width → side-on or vertical recording → split on X.
     is_portrait = source_height > 0 and source_width > 0 and source_height > source_width
     axis = "x" if is_portrait else "y"
 
-    if axis == "y":
-        # Y-axis split: Near End = bottom half (Y >= source_height/2)
-        half = source_height / 2.0
+    track_medians: list[tuple[PlayerTrack, float, float]] = []  # (track, median_pos, median_area)
 
-        track_medians: list[tuple[PlayerTrack, float, int]] = []
+    if axis == "y":
+        half = source_height / 2.0
         for track in tracks:
             poses = (
-                db.query(PoseFrame.bbox_y, PoseFrame.bbox_h)
+                db.query(PoseFrame.bbox_y, PoseFrame.bbox_h, PoseFrame.bbox_w)
                 .filter(PoseFrame.player_track_id == track.id)
                 .filter(PoseFrame.bbox_y.isnot(None))
                 .all()
             )
             if not poses:
                 continue
-            centres = sorted([(row[0] + (row[1] or 0) / 2.0) for row in poses])
+            centres = sorted([row[0] for row in poses])
+            areas = sorted([((row[2] or 0) * (row[1] or 0)) for row in poses])
             median_y = centres[len(centres) // 2]
-            track_medians.append((track, median_y, len(poses)))
+            median_area = areas[len(areas) // 2]
+            track_medians.append((track, median_y, median_area))
 
-        # If Y variance is very low, fall back to X (probably a side-on view
-        # that was miscategorised as landscape).
+        # If Y variance is very low, fall back to X.
         if track_medians:
             y_spread = max(m[1] for m in track_medians) - min(m[1] for m in track_medians)
             if y_spread < source_height * 0.15:
                 axis = "x"
-    
-    if axis == "x":
-        # X-axis split: Near End = right half (X >= source_width/2)
-        # For portrait footage the "near end" is conventionally the player
-        # who appears on the right (or bottom of a rotated view).
-        effective_width = source_width or source_height  # fallback if width=0
-        half = effective_width / 2.0
 
+    if axis == "x":
+        effective_width = source_width or source_height
+        half = effective_width / 2.0
         track_medians = []
         for track in tracks:
             poses = (
-                db.query(PoseFrame.bbox_x, PoseFrame.bbox_w)
+                db.query(PoseFrame.bbox_x, PoseFrame.bbox_w, PoseFrame.bbox_h)
                 .filter(PoseFrame.player_track_id == track.id)
                 .filter(PoseFrame.bbox_x.isnot(None))
                 .all()
             )
             if not poses:
                 continue
-            centres = sorted([(row[0] + (row[1] or 0) / 2.0) for row in poses])
+            centres = sorted([row[0] for row in poses])
+            areas = sorted([((row[1] or 0) * (row[2] or 0)) for row in poses])
             median_x = centres[len(centres) // 2]
-            track_medians.append((track, median_x, len(poses)))
+            median_area = areas[len(areas) // 2]
+            track_medians.append((track, median_x, median_area))
 
     if not track_medians:
         return {"near_end": None, "far_end": None, "axis": axis, "ambiguous": True}
 
-    # Partition into two halves and pick canonical track (most pose frames).
-    near_candidates = [(t, c, n) for t, c, n in track_medians if c >= half]
-    far_candidates  = [(t, c, n) for t, c, n in track_medians if c < half]
+    # Partition into two halves. Within each half, pick the track with the
+    # largest median bbox area (= closest to camera = most likely real player).
+    near_candidates = [(t, pos, area) for t, pos, area in track_medians if pos >= half]
+    far_candidates  = [(t, pos, area) for t, pos, area in track_medians if pos < half]
 
     near_track = max(near_candidates, key=lambda x: x[2])[0] if near_candidates else None
     far_track  = max(far_candidates,  key=lambda x: x[2])[0] if far_candidates  else None
 
     ambiguous = (near_track is None or far_track is None)
 
-    # Persist labels and notes.
     if axis == "x":
-        near_label = "right_side"
-        far_label  = "left_side"
-        near_note  = "Auto-assigned: right side of frame"
-        far_note   = "Auto-assigned: left side of frame"
+        near_label, far_label = "right_side", "left_side"
+        near_note = "Auto-assigned: right side of frame"
+        far_note  = "Auto-assigned: left side of frame"
     else:
-        near_label = "near_end"
-        far_label  = "far_end"
-        near_note  = "Auto-assigned: near end of court (closer to camera)"
-        far_note   = "Auto-assigned: far end of court (further from camera)"
+        near_label, far_label = "near_end", "far_end"
+        near_note = "Auto-assigned: near end of court (closer to camera)"
+        far_note  = "Auto-assigned: far end of court (further from camera)"
 
     if near_track:
-        near_track.track_label = near_label
+        near_track.track_label   = near_label
         near_track.identity_note = near_note
     if far_track:
-        far_track.track_label = far_label
+        far_track.track_label   = far_label
         far_track.identity_note = far_note
     db.commit()
 
     return {
-        "near_end": near_track,
-        "far_end": far_track,
-        "axis": axis,
+        "near_end":  near_track,
+        "far_end":   far_track,
+        "axis":      axis,
         "ambiguous": ambiguous,
     }
 
