@@ -29,6 +29,7 @@ from app.api.analyses import router as analyses_router
 from app.api.assets import router as assets_router
 from app.api.auth import router as auth_router
 from app.api.matches import router as matches_router
+from app.api.system import router as system_router
 from app.api.vision import router as vision_router
 from app.config import settings
 
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(assets_router)
     app.include_router(analyses_router)
     app.include_router(vision_router)
+    app.include_router(system_router)
 
     # ── Health check (unauthenticated) ─────────────────────────────────────
     @app.get("/health", include_in_schema=False)
