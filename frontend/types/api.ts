@@ -209,3 +209,69 @@ export interface CourtCalibrationListResponse {
   items: CourtCalibration[];
   total: number;
 }
+
+// ── System info (Profile page) ───────────────────────────────────────────────
+
+export interface SystemGpu {
+  index?: number;
+  name?: string;
+  vram_total_gb?: number;
+  vram_reserved_gb?: number;
+  vram_allocated_gb?: number;
+  vram_free_gb?: number;
+  cuda_capability?: string;
+  sm_count?: number;
+  cuda_version?: string;
+  torch_version?: string;
+  util_gpu_pct?: number;
+  util_mem_pct?: number;
+  temp_celsius?: number;
+  available: boolean;
+  reason?: string;
+}
+
+export interface SystemInfo {
+  platform: {
+    os: string;
+    os_version: string;
+    os_release: string;
+    machine: string;
+    hostname: string;
+  };
+  cpu: {
+    name: string;
+    physical_cores?: number;
+    logical_cores?: number;
+    freq_mhz_current?: number;
+    freq_mhz_max?: number;
+    usage_pct?: number;
+  };
+  ram: {
+    total_gb?: number;
+    available_gb?: number;
+    used_gb?: number;
+    usage_pct?: number;
+  };
+  disk: {
+    path?: string;
+    total_gb?: number;
+    used_gb?: number;
+    free_gb?: number;
+    usage_pct?: number;
+  };
+  gpus: SystemGpu[];
+  python: {
+    version: string;
+    implementation: string;
+    executable: string;
+  };
+  models: Record<string, {
+    name: string;
+    task: string;
+    available: boolean;
+    weights_cached?: boolean;
+    weights_path?: string | null;
+  }>;
+  capabilities: Record<string, boolean>;
+  config: Record<string, string | number | boolean>;
+}

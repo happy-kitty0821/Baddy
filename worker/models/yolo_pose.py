@@ -54,12 +54,9 @@ MODEL_ID = "yolo11n-pose"
 # ── Post-detection filter constants ──────────────────────────────────────────
 
 # Minimum bbox area as a fraction of total frame area.
-# 0.005 = 0.5 % — rejects very small distant detections.
 MIN_BBOX_AREA_FRACTION = 0.005
 
 # Acceptable h/w aspect ratio range for a person standing or crouching.
-# h/w < 1.2 → too wide (crowd row, false positive).
-# h/w > 6.0 → too narrow (partial body on frame edge).
 MIN_ASPECT_RATIO = 1.2
 MAX_ASPECT_RATIO = 6.0
 
@@ -68,11 +65,15 @@ KEYPOINT_VIS_THRESHOLD = 0.25
 MIN_VISIBLE_KEYPOINTS = 5
 
 # Fraction of frame dimension — detections centred this close to any edge
-# are rejected as out-of-court.
-EDGE_MARGIN = 0.04
+# are rejected as out-of-court.  12% catches service judges at the sideline.
+EDGE_MARGIN = 0.12
+
+# Minimum bbox height as a fraction of frame height.
+# A standing/moving badminton player is at least 12% of frame height.
+# Seated service judges and umpires are typically 6-10% — rejected by this.
+MIN_BBOX_HEIGHT_FRACTION = 0.12
 
 # Portrait imgsz: keep the long axis at 960 for better quality on tall frames.
-# Ultralytics accepts (height, width) tuples.
 PORTRAIT_IMGSZ_LONG = 960
 
 
@@ -245,7 +246,16 @@ class YoloPoseAdapter:
                     )
                     continue
 
-                # 2. Aspect-ratio plausibility — person is taller than wide.
+                # 2. Minimum bbox height — reject seated officials/umpires.
+                if bh < frame_h * MIN_BBOX_HEIGHT_FRACTION:
+                    logger.debug(
+                        "Rejected detection: height %.0f < min %.0f (%.1f%% of frame)",
+                        bh, frame_h * MIN_BBOX_HEIGHT_FRACTION,
+                        MIN_BBOX_HEIGHT_FRACTION * 100,
+                    )
+                    continue
+
+                # 3. Aspect-ratio plausibility — person is taller than wide.
                 if bw > 0:
                     aspect = bh / bw
                     if not (MIN_ASPECT_RATIO <= aspect <= MAX_ASPECT_RATIO):
@@ -255,7 +265,8 @@ class YoloPoseAdapter:
                         )
                         continue
 
-                # 3. Court-edge exclusion — skip detections on the frame border.
+                # 4. Court-edge exclusion — skip detections near the frame border.
+                # 12% margin catches service judges standing at the sideline.
                 margin_x = frame_w * EDGE_MARGIN
                 margin_y = frame_h * EDGE_MARGIN
                 if (cx < margin_x or cx > frame_w - margin_x or

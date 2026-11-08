@@ -43,6 +43,12 @@ export default function NavBar() {
               >
                 Upload
               </Link>
+              <Link
+                href="/profile"
+                className="text-gray-300 hover:text-white transition-colors"
+              >
+                System
+              </Link>
             </div>
           </div>
           <button

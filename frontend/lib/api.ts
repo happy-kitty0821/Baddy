@@ -280,6 +280,12 @@ async function getCourtCalibrations(runId: string): Promise<CourtCalibrationList
   return apiFetch<CourtCalibrationListResponse>(`/analyses/${runId}/court-calibrations`);
 }
 
+// ── System info ───────────────────────────────────────────────────────────────
+
+async function getSystemInfo(): Promise<import("@/types/api").SystemInfo> {
+  return apiFetch<import("@/types/api").SystemInfo>("/system");
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 const apiClient = {
@@ -315,6 +321,8 @@ const apiClient = {
   getShuttle,
   // court calibration (Phase 3)
   getCourtCalibrations,
+  // system info
+  getSystemInfo,
 };
 
 export default apiClient;
